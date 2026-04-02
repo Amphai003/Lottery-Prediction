@@ -1,0 +1,47 @@
+package db
+
+import (
+	"database/sql"
+	"fmt"
+	"log"
+	"os"
+	_ "github.com/lib/pq"
+)
+
+var DB *sql.DB
+
+func InitDB() *sql.DB {
+	connStr := os.Getenv("DATABASE_URL")
+	if connStr == "" {
+		// Use fallback from local development or db.go
+		connStr = "postgres://postgres:AA%40pgadmin%232025@localhost:5432/lottery_db?sslmode=disable"
+	}
+	var err error
+	DB, err = sql.Open("postgres", connStr)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	_, err = DB.Exec(`CREATE TABLE IF NOT EXISTS prize_history (
+		id SERIAL PRIMARY KEY,
+		api_id INT UNIQUE,
+		round_id TEXT,
+		round_date TIMESTAMP,
+		win_number TEXT,
+		round_number TEXT
+	)`)
+	if err != nil { log.Fatal(err) }
+
+	_, err = DB.Exec(`CREATE TABLE IF NOT EXISTS predictions (
+		id SERIAL PRIMARY KEY,
+		numbers TEXT,
+		probability DOUBLE PRECISION,
+		source TEXT DEFAULT 'manual',
+		predicted_at TIMESTAMP
+	)`)
+	if err != nil { log.Fatal(err) }
+	_, _ = DB.Exec("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'manual'")
+
+	fmt.Println("Database initialized successfully.")
+	return DB
+}
