@@ -18,6 +18,8 @@ A premium, full-stack predictive analytics suite for lottery data.
 cd backend
 go mod tidy
 # Ensure PostgreSQL is running then:
+cp .env.example .env
+# Edit .env and paste your API keys
 DATABASE_URL=postgres://user:pass@localhost:5432/lottery_db go run .
 ```
 The backend will:
