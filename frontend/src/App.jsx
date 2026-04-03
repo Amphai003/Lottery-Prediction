@@ -72,31 +72,29 @@ function App() {
     syncAndFetch()
   }, [page])
 
-  // 🤖 Auto Random Generation on New Result
+  // 🤖 Auto Random Generation Once Per Day
   useEffect(() => {
-    if (history.length > 0) {
-      const latestId = history[0].apiId
-      const lastKnownId = localStorage.getItem('lastProcessedId')
-      
-      if (latestId && String(latestId) !== lastKnownId) {
-        // Generate total 10 sets (5 for 2D, 5 for 3D)
-        const newAutoRandoms = []
-        for (let i = 0; i < 5; i++) {
-          newAutoRandoms.push({ numbers: Math.floor(Math.random() * 100).toString().padStart(2, '0'), rate: 50, source: 'auto' })
-        }
-        for (let i = 0; i < 5; i++) {
-          newAutoRandoms.push({ numbers: Math.floor(Math.random() * 1000).toString().padStart(3, '0'), rate: 50, source: 'auto' })
-        }
-        
-        setAutoSets(newAutoRandoms)
-        localStorage.setItem('lastProcessedId', String(latestId))
-        
-        // Auto-Vault these sets with correct JSON keys
-        const batch = newAutoRandoms.map(s => ({ numbers: s.numbers, probability: s.rate, source: 'auto' }))
-        lotteryApi.saveBatch(batch).then(() => fetchStats())
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }) // Use local ICT date
+    const lastGeneratedDate = localStorage.getItem('lastAutoDate')
+    
+    if (today !== lastGeneratedDate) {
+      // Generate total 10 sets (5 for 2D, 5 for 3D)
+      const newAutoRandoms = []
+      for (let i = 0; i < 5; i++) {
+        newAutoRandoms.push({ numbers: Math.floor(Math.random() * 100).toString().padStart(2, '0'), rate: 50, source: 'auto' })
       }
+      for (let i = 0; i < 5; i++) {
+        newAutoRandoms.push({ numbers: Math.floor(Math.random() * 1000).toString().padStart(3, '0'), rate: 50, source: 'auto' })
+      }
+      
+      setAutoSets(newAutoRandoms)
+      localStorage.setItem('lastAutoDate', today)
+      
+      // Auto-Vault these sets with correct JSON keys
+      const batch = newAutoRandoms.map(s => ({ numbers: s.numbers, probability: s.rate, source: 'auto' }))
+      lotteryApi.saveBatch(batch).then(() => fetchStats())
     }
-  }, [history])
+  }, [])
 
   const fetchMainData = async () => {
     const res = await lotteryApi.getHistory(PAGE_SIZE, page * PAGE_SIZE)
