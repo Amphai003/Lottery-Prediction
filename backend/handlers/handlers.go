@@ -144,25 +144,81 @@ func PurgeHandler(w http.ResponseWriter, r *http.Request) {
 func GetSavedPredictionsHandler(w http.ResponseWriter, r *http.Request) {
 	SetCORS(w)
 	w.Header().Set("Content-Type", "application/json")
-	var latestWin string; var latestDate time.Time
-	db.DB.QueryRow("SELECT win_number, round_date FROM prize_history WHERE win_number != '' ORDER BY api_id DESC LIMIT 1").Scan(&latestWin, &latestDate)
 
+	// Use ICT (+7) for date matching to align with Lao/Thai lottery cycles
+	ict := time.FixedZone("ICT", 7*3600)
+	todayDateStr := time.Now().In(ict).Format("2006-01-02")
+
+	// 1. Fetch all winning numbers from history into a map for precise date matching
+	winMap := make(map[string][]string)
+	historyRows, _ := db.DB.Query("SELECT round_date, win_number FROM prize_history WHERE win_number != ''")
+	var lastDrawDate time.Time
+	if historyRows != nil {
+		defer historyRows.Close()
+		for historyRows.Next() {
+			var rd time.Time; var wn string
+			if err := historyRows.Scan(&rd, &wn); err == nil {
+				dateStr := rd.In(ict).Format("2006-01-02")
+				winMap[dateStr] = append(winMap[dateStr], strings.ReplaceAll(wn, " ", ""))
+				if rd.After(lastDrawDate) {
+					lastDrawDate = rd
+				}
+			}
+		}
+	}
+
+	// 2. Evaluate each prediction based on its specific date
 	rows, _ := db.DB.Query("SELECT id, numbers, probability, source, predicted_at FROM predictions ORDER BY predicted_at DESC LIMIT 500")
+	if rows == nil { 
+		json.NewEncoder(w).Encode([]interface{}{})
+		return 
+	}
 	defer rows.Close()
+	
 	var results []map[string]interface{}
 	for rows.Next() {
 		var id int; var num, src string; var prob float64; var at time.Time
 		rows.Scan(&id, &num, &prob, &src, &at)
 		
+		// Map prediction timestamp to ICT day string
+		predictedDate := at.In(ict).Format("2006-01-02")
+		
 		status := "Lost Case"
-		// Improvement: Check match FIRST before pending
-		if latestWin != "" && strings.HasSuffix(latestWin, num) {
-			status = "Win Lottery"
-		} else if at.After(latestDate.Add(24 * time.Hour)) {
-			status = "Pending Result"
+		winners, found := winMap[predictedDate]
+		
+		if found {
+			// A winner exists for this EXACT day
+			isWin := false
+			for _, winNum := range winners {
+				if strings.HasSuffix(winNum, num) {
+					isWin = true
+					break
+				}
+			}
+			if isWin {
+				status = "Win Lottery"
+			} else {
+				status = "Lost Case"
+			}
+		} else {
+			// No winner recorded for this date yet
+			// If it's today (local) or after our latest known draw, it's pending
+			if predictedDate == todayDateStr || at.After(lastDrawDate) {
+				status = "Pending Result"
+			} else {
+				// Past date with no result found -> Missed Round
+				status = "Lost Case"
+			}
 		}
 		
-		results = append(results, map[string]interface{}{"id": id, "numbers": num, "probability": prob, "source": src, "predicted_at": at.UTC(), "status": status})
+		results = append(results, map[string]interface{}{
+			"id": id, 
+			"numbers": num, 
+			"probability": prob, 
+			"source": src, 
+			"predicted_at": at.UTC(), 
+			"status": status,
+		})
 	}
 	json.NewEncoder(w).Encode(results)
 }
