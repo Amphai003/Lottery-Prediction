@@ -92,7 +92,7 @@ function App() {
         localStorage.setItem('lastProcessedId', String(latestId))
         
         // Auto-Vault these sets with correct JSON keys
-        const batch = newAutoRandoms.map(s => ({ numbers: s.number, probability: s.rate, source: 'auto' }))
+        const batch = newAutoRandoms.map(s => ({ numbers: s.numbers, probability: s.rate, source: 'auto' }))
         lotteryApi.saveBatch(batch).then(() => fetchStats())
       }
     }
