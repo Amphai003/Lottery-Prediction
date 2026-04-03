@@ -35,6 +35,14 @@ func SyncData() (int, error) {
 		return 0, fmt.Errorf("failed to parse result data: %v", err)
 	}
 
+	if len(apiResp.ResultData) > 0 {
+		fmt.Printf("[%v] Latest from API: RD#%s | Date: %s | Win: [%s]\n", 
+			time.Now().Format("15:04:05"), 
+			apiResp.ResultData[0].RoundNumber, 
+			apiResp.ResultData[0].RoundDate, 
+			apiResp.ResultData[0].WinNumber)
+	}
+
 	count := 0
 	for _, item := range apiResp.ResultData {
 		win := strings.ReplaceAll(item.WinNumber, " ", "")
@@ -147,10 +155,11 @@ func GetSavedPredictionsHandler(w http.ResponseWriter, r *http.Request) {
 		rows.Scan(&id, &num, &prob, &src, &at)
 		
 		status := "Lost Case"
-		if at.After(latestDate) {
-			status = "Pending Result"
-		} else if latestWin != "" && strings.HasSuffix(latestWin, num) {
+		// Improvement: Check match FIRST before pending
+		if latestWin != "" && strings.HasSuffix(latestWin, num) {
 			status = "Win Lottery"
+		} else if at.After(latestDate.Add(24 * time.Hour)) {
+			status = "Pending Result"
 		}
 		
 		results = append(results, map[string]interface{}{"id": id, "numbers": num, "probability": prob, "source": src, "predicted_at": at.UTC(), "status": status})
