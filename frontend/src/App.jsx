@@ -72,29 +72,72 @@ function App() {
     syncAndFetch()
   }, [page])
 
-  // 🤖 Auto Random Generation Once Per Day
+  // 🤖 Auto Calculated Generation on New Result
   useEffect(() => {
-    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }) // Use local ICT date
-    const lastGeneratedDate = localStorage.getItem('lastAutoDate')
-    
-    if (today !== lastGeneratedDate) {
-      // Generate total 10 sets (5 for 2D, 5 for 3D)
-      const newAutoRandoms = []
-      for (let i = 0; i < 5; i++) {
-        newAutoRandoms.push({ numbers: Math.floor(Math.random() * 100).toString().padStart(2, '0'), rate: 50, source: 'auto' })
-      }
-      for (let i = 0; i < 5; i++) {
-        newAutoRandoms.push({ numbers: Math.floor(Math.random() * 1000).toString().padStart(3, '0'), rate: 50, source: 'auto' })
-      }
+    // Only detect new results when we are truly looking at the latest data (page 0)
+    if (page === 0 && history.length > 0) {
+      const latestId = history[0].apiId;
+      const lastKnownId = localStorage.getItem('lastProcessedId');
       
-      setAutoSets(newAutoRandoms)
-      localStorage.setItem('lastAutoDate', today)
+      const todayDate = new Date().toLocaleDateString();
+      const lastGeneratedDate = localStorage.getItem('lastGeneratedDate');
       
-      // Auto-Vault these sets with correct JSON keys
-      const batch = newAutoRandoms.map(s => ({ numbers: s.numbers, probability: s.rate, source: 'auto' }))
-      lotteryApi.saveBatch(batch).then(() => fetchStats())
+      if (latestId && String(latestId) !== lastKnownId) {
+        // Prevent race condition when paginating back to page 0 with stale data
+        if (lastKnownId && latestId < parseInt(lastKnownId)) return;
+
+        // Ensure generation only happens once per day when lottery comes out
+        if (todayDate === lastGeneratedDate) {
+          localStorage.setItem('lastProcessedId', String(latestId));
+          return;
+        }
+
+        const fetchAutoCalculated = async () => {
+          try {
+            // Request probability-based numbers instead of pure random
+            const [res2D, res3D] = await Promise.all([
+              lotteryApi.runLocalPredict(2, 5),
+              lotteryApi.runLocalPredict(3, 5)
+            ]);
+            
+            // Inline parser to parse the calculated results safely
+            const parseInline = (raw, dId) => {
+              if (!raw) return [];
+              return raw.split('|||').map(p => {
+                const numMatch = p.match(/NUMBER:\s*(\d+)/);
+                const rateMatch = p.match(/WINRATE:\s*(\d+(\.\d+)?)%/);
+                let numbers = numMatch ? numMatch[1] : "".padStart(dId, "?");
+                if (numbers.length > dId) numbers = numbers.slice(-dId);
+                return { numbers, rate: rateMatch ? parseFloat(rateMatch[1]) : 75, source: 'auto' };
+              });
+            };
+
+            let newAutoCalculated = [];
+            if (res2D && res2D.prediction) {
+              newAutoCalculated = newAutoCalculated.concat(parseInline(res2D.prediction, 2));
+            }
+            if (res3D && res3D.prediction) {
+              newAutoCalculated = newAutoCalculated.concat(parseInline(res3D.prediction, 3));
+            }
+            
+            if (newAutoCalculated.length > 0) {
+              setAutoSets(newAutoCalculated);
+              localStorage.setItem('lastProcessedId', String(latestId));
+              localStorage.setItem('lastGeneratedDate', todayDate);
+              
+              // Auto-Vault these strategically calculated sets
+              const batch = newAutoCalculated.map(s => ({ numbers: s.numbers, probability: s.rate, source: 'auto' }));
+              await lotteryApi.saveBatch(batch);
+              fetchStats();
+            }
+          } catch (err) {
+            console.error("Auto calculation failed:", err);
+          }
+        };
+        fetchAutoCalculated();
+      }
     }
-  }, [])
+  }, [history, page])
 
   const fetchMainData = async () => {
     const res = await lotteryApi.getHistory(PAGE_SIZE, page * PAGE_SIZE)
