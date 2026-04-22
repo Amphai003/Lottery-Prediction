@@ -276,10 +276,12 @@ func LocalPredictHandler(w http.ResponseWriter, r *http.Request) {
 		if len(h) < digits { continue }
 		suffix := h[len(h)-digits:]
 		
-		// Weight recent draws much heavier
+		// Smoother weight decay for the history
+		// Recent draws still matter, but do not overwhelm the entire 100 history
 		weight := 1
-		if hIndex < 20 { weight = 5 }
-		if hIndex < 5 { weight = 15 } // Extremely high bias for the last 5 draws
+		if hIndex < 30 { weight = 2 }
+		if hIndex < 10 { weight = 3 }
+		if hIndex < 3 { weight = 4 }
 
 		comboMap[suffix] += weight
 
@@ -295,28 +297,28 @@ func LocalPredictHandler(w http.ResponseWriter, r *http.Request) {
 		num := ""
 		explanation := ""
 		
-		// Strategy 1: Best Combination (Highest weight)
+		// Strategy 1: Best Combination (Highest weight with more randomness)
 		if i == 0 {
 			bestCombo := ""
 			maxC := 0
 			for c, co := range comboMap {
-				// Add tiny random variance to tie-breakers
-				score := co + rand.Intn(3)
+				// Increased random variance so it doesn't just pick the absolute newest
+				score := co + rand.Intn(10)
 				if score > maxC { maxC = score; bestCombo = c }
 			}
 			if maxC > 5 && bestCombo != "" {
 				num = bestCombo
-				explanation = "Pattern Recognition: Most dominant exact recent combination detected."
+				explanation = "Pattern Recognition: Identified frequent combination across history."
 			}
 		}
 		
-		// Strategy 2: Squared Weights per position
+		// Strategy 2: Proportional Probability per position
 		if num == "" {
 			for pos := 0; pos < digits; pos++ {
 				weights := freqMap[pos]
 				totalWeight := 0
 				for d := 0; d <= 9; d++ {
-					w := weights[d] * weights[d] + 1 // Square the weight to aggressively prefer hot digits
+					w := weights[d] + 1 // Use direct weight, no squaring
 					totalWeight += w
 				}
 
@@ -324,7 +326,7 @@ func LocalPredictHandler(w http.ResponseWriter, r *http.Request) {
 				cumulative := 0
 				digit := 0
 				for d := 0; d <= 9; d++ {
-					w := weights[d] * weights[d] + 1
+					w := weights[d] + 1
 					cumulative += w
 					if rVal < cumulative {
 						digit = d
@@ -333,7 +335,7 @@ func LocalPredictHandler(w http.ResponseWriter, r *http.Request) {
 				}
 				num += fmt.Sprintf("%d", digit)
 			}
-			explanation = "Advanced Weighted Frequency. Extrapolating deep hot-zones from recent draws (15x bias)."
+			explanation = "Historical Frequency Distribution. Balanced selection from last 100 draws."
 		}
 		
 		winRate := rand.Intn(8) + 88 // 88% - 95% perceived win rate
