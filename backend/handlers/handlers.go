@@ -295,47 +295,28 @@ func LocalPredictHandler(w http.ResponseWriter, r *http.Request) {
 
 	for i := 0; i < count; i++ {
 		num := ""
-		explanation := ""
+		explanation := "Historical Frequency Distribution. Balanced selection from last 100 draws."
 		
-		// Strategy 1: Best Combination (Highest weight with more randomness)
-		if i == 0 {
-			bestCombo := ""
-			maxC := 0
-			for c, co := range comboMap {
-				// Increased random variance so it doesn't just pick the absolute newest
-				score := co + rand.Intn(10)
-				if score > maxC { maxC = score; bestCombo = c }
+		for pos := 0; pos < digits; pos++ {
+			weights := freqMap[pos]
+			totalWeight := 0
+			for d := 0; d <= 9; d++ {
+				w := weights[d] + 1 // Use direct weight
+				totalWeight += w
 			}
-			if maxC > 5 && bestCombo != "" {
-				num = bestCombo
-				explanation = "Pattern Recognition: Identified frequent combination across history."
-			}
-		}
-		
-		// Strategy 2: Proportional Probability per position
-		if num == "" {
-			for pos := 0; pos < digits; pos++ {
-				weights := freqMap[pos]
-				totalWeight := 0
-				for d := 0; d <= 9; d++ {
-					w := weights[d] + 1 // Use direct weight, no squaring
-					totalWeight += w
-				}
 
-				rVal := rand.Intn(totalWeight)
-				cumulative := 0
-				digit := 0
-				for d := 0; d <= 9; d++ {
-					w := weights[d] + 1
-					cumulative += w
-					if rVal < cumulative {
-						digit = d
-						break
-					}
+			rVal := rand.Intn(totalWeight)
+			cumulative := 0
+			digit := 0
+			for d := 0; d <= 9; d++ {
+				w := weights[d] + 1
+				cumulative += w
+				if rVal < cumulative {
+					digit = d
+					break
 				}
-				num += fmt.Sprintf("%d", digit)
 			}
-			explanation = "Historical Frequency Distribution. Balanced selection from last 100 draws."
+			num += fmt.Sprintf("%d", digit)
 		}
 		
 		winRate := rand.Intn(8) + 88 // 88% - 95% perceived win rate
