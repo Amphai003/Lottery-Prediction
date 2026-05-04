@@ -26,6 +26,7 @@ function App() {
   const [gptSets, setGptSets] = useState([])
   const [geminiSets, setGeminiSets] = useState([])
   const [localSets, setLocalSets] = useState([])
+  const [localFrequencies, setLocalFrequencies] = useState([])
   const [autoSets, setAutoSets] = useState([])
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark')
 
@@ -40,10 +41,12 @@ function App() {
     const cachedGpt = localStorage.getItem('gptSets')
     const cachedGem = localStorage.getItem('geminiSets')
     const cachedLoc = localStorage.getItem('localSets')
+    const cachedFreq = localStorage.getItem('localFrequencies')
     const cachedAuto = localStorage.getItem('autoSets')
     if (cachedGpt) setGptSets(JSON.parse(cachedGpt))
     if (cachedGem) setGeminiSets(JSON.parse(cachedGem))
     if (cachedLoc) setLocalSets(JSON.parse(cachedLoc))
+    if (cachedFreq) setLocalFrequencies(JSON.parse(cachedFreq))
     if (cachedAuto) setAutoSets(JSON.parse(cachedAuto))
 
     return () => clearInterval(timer)
@@ -60,6 +63,7 @@ function App() {
   useEffect(() => { if (gptSets.length && gptSets[0].numbers) localStorage.setItem('gptSets', JSON.stringify(gptSets)) }, [gptSets])
   useEffect(() => { if (geminiSets.length && geminiSets[0].numbers) localStorage.setItem('geminiSets', JSON.stringify(geminiSets)) }, [geminiSets])
   useEffect(() => { if (localSets.length && localSets[0].numbers) localStorage.setItem('localSets', JSON.stringify(localSets)) }, [localSets])
+  useEffect(() => { if (localFrequencies.length) localStorage.setItem('localFrequencies', JSON.stringify(localFrequencies)) }, [localFrequencies])
   useEffect(() => { if (autoSets.length) localStorage.setItem('autoSets', JSON.stringify(autoSets)) }, [autoSets])
 
   // 📡 Data Synchronization Loop
@@ -181,7 +185,10 @@ function App() {
     setLocalSets([{ text: "Simulating Local Node Consensus..." }])
     try {
       const res = await lotteryApi.runLocalPredict(digits, count)
-      if (res && res.prediction) setLocalSets(parseSets(res.prediction))
+      if (res) {
+        if (res.prediction) setLocalSets(parseSets(res.prediction))
+        if (res.frequencies) setLocalFrequencies(res.frequencies)
+      }
     } finally { setIsAILoading(false) }
   }
 
@@ -257,6 +264,7 @@ function App() {
 
       <PredictionNodes 
         gptSets={gptSets} geminiSets={geminiSets} localSets={localSets} autoSets={autoSets}
+        localFrequencies={localFrequencies}
         onCopy={copyToClipboard} onSave={handleSave} onSaveBatch={handleSaveBatch}
       />
 

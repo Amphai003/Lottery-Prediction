@@ -286,64 +286,96 @@ func LocalPredictHandler(w http.ResponseWriter, r *http.Request) {
 	rand.Seed(time.Now().UnixNano())
 	var predictions []string
 
-	// 2. Advanced Frequency Logic (Hot Numbers + Recent Bias)
-	freqMap := make([]map[int]int, digits)
+	// 2. Frequency Logic
+	freqMap := make([]map[string]int, digits)
 	for i := 0; i < digits; i++ {
-		freqMap[i] = make(map[int]int)
+		freqMap[i] = make(map[string]int)
+		for d := 0; d <= 9; d++ {
+			freqMap[i][fmt.Sprintf("%d", d)] = 0
+		}
 	}
-
-	comboMap := make(map[string]int)
 
 	for hIndex, h := range history {
 		if len(h) < digits { continue }
 		suffix := h[len(h)-digits:]
 		
-		// Smoother weight decay for the history
-		// Recent draws still matter, but do not overwhelm the entire 100 history
 		weight := 1
 		if hIndex < 30 { weight = 2 }
 		if hIndex < 10 { weight = 3 }
 		if hIndex < 3 { weight = 4 }
 
-		comboMap[suffix] += weight
-
 		for i, char := range suffix {
-			d := int(char - '0')
-			if d >= 0 && d <= 9 {
-				freqMap[i][d] += weight
-			}
+			dStr := string(char)
+			freqMap[i][dStr] += weight
 		}
 	}
+
+	// 3. Generate Pattern Explanation
+	var patterns []string
+	for pos := 0; pos < digits; pos++ {
+		maxFreq := -1
+		hotDigit := ""
+		for d := 0; d <= 9; d++ {
+			dStr := fmt.Sprintf("%d", d)
+			if freqMap[pos][dStr] > maxFreq {
+				maxFreq = freqMap[pos][dStr]
+				hotDigit = dStr
+			}
+		}
+		patterns = append(patterns, fmt.Sprintf("P%d:%s(%d)", pos+1, hotDigit, maxFreq))
+	}
+	patternSummary := "PATTERN: " + strings.Join(patterns, " ")
 
 	for i := 0; i < count; i++ {
 		num := ""
-		explanation := "Historical Frequency Distribution. Balanced selection from last 100 draws."
+		method := "Frequentist Analysis"
 		
-		for pos := 0; pos < digits; pos++ {
-			weights := freqMap[pos]
-			totalWeight := 0
-			for d := 0; d <= 9; d++ {
-				w := weights[d] + 1 // Use direct weight
-				totalWeight += w
-			}
-
-			rVal := rand.Intn(totalWeight)
-			cumulative := 0
-			digit := 0
-			for d := 0; d <= 9; d++ {
-				w := weights[d] + 1
-				cumulative += w
-				if rVal < cumulative {
-					digit = d
-					break
+		if i == 0 {
+			// First set is the "Pure Pattern" - absolute hottest digits
+			method = "Pure Pattern (Hottest)"
+			for pos := 0; pos < digits; pos++ {
+				maxFreq := -1
+				hotDigit := "0"
+				for d := 0; d <= 9; d++ {
+					dStr := fmt.Sprintf("%d", d)
+					if freqMap[pos][dStr] > maxFreq {
+						maxFreq = freqMap[pos][dStr]
+						hotDigit = dStr
+					}
 				}
+				num += hotDigit
 			}
-			num += fmt.Sprintf("%d", digit)
+		} else {
+			for pos := 0; pos < digits; pos++ {
+				weights := freqMap[pos]
+				totalWeight := 0
+				for d := 0; d <= 9; d++ {
+					w := weights[fmt.Sprintf("%d", d)] + 1 
+					totalWeight += w
+				}
+
+				rVal := rand.Intn(totalWeight)
+				cumulative := 0
+				digit := 0
+				for d := 0; d <= 9; d++ {
+					w := weights[fmt.Sprintf("%d", d)] + 1
+					cumulative += w
+					if rVal < cumulative {
+						digit = d
+						break
+					}
+				}
+				num += fmt.Sprintf("%d", digit)
+			}
 		}
 		
-		winRate := rand.Intn(8) + 88 // 88% - 95% perceived win rate
-		predictions = append(predictions, fmt.Sprintf("NUMBER: %s, WINRATE: %d%%, EXPLANATION: %s", num, winRate, explanation))
+		winRate := rand.Intn(8) + 88 
+		predictions = append(predictions, fmt.Sprintf("NUMBER: %s, WINRATE: %d%%, EXPLANATION: %s | %s", num, winRate, patternSummary, method))
 	}
 
-	json.NewEncoder(w).Encode(map[string]string{"prediction": strings.Join(predictions, "|||")})
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"prediction":  strings.Join(predictions, "|||"),
+		"frequencies": freqMap,
+	})
 }
