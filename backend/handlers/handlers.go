@@ -310,7 +310,21 @@ func LocalPredictHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 3. Generate Prediction Ranks
+	// 3. Analyze Twin Frequency (Doubles like 99, 88)
+	twinCount := 0
+	for _, h := range history {
+		for i := 0; i < len(h)-1; i++ {
+			if h[i] == h[i+1] {
+				twinCount++
+			}
+		}
+	}
+	twinRate := float64(twinCount) / float64(len(history)*digits)
+	twinBonus := 1
+	if twinRate > 0.05 { twinBonus = 2 } // If doubles are common, boost them
+	if twinRate > 0.10 { twinBonus = 3 }
+
+	// 4. Generate Prediction Ranks
 
 	// 4. Rank Digits for Tiered Patterns
 	type digitRank struct {
@@ -358,14 +372,24 @@ func LocalPredictHandler(w http.ResponseWriter, r *http.Request) {
 			for pos := 0; pos < digits; pos++ {
 				num += rankedFreqs[pos][2].digit
 			}
+			
 		} else {
 			method = "Neural Weighted Selection"
-			explanation = "Stochastic Frequency Balancing. A balanced selection based on full historical distribution and recent bias."
+			explanation = "Stochastic Frequency Balancing. "
+			if twinBonus > 1 {
+				explanation += "Neural Twin Detection active (Double Digit Bias). "
+			}
+			explanation += "Balanced selection based on historical distribution."
+
 			for pos := 0; pos < digits; pos++ {
 				weights := freqMap[pos]
 				totalWeight := 0
 				for d := 0; d <= 9; d++ {
-					w := weights[fmt.Sprintf("%d", d)] + 1 
+					dStr := fmt.Sprintf("%d", d)
+					w := weights[dStr] + 1 
+					if pos > 0 && dStr == string(num[pos-1]) && twinBonus > 1 {
+						w *= twinBonus
+					}
 					totalWeight += w
 				}
 
@@ -373,7 +397,11 @@ func LocalPredictHandler(w http.ResponseWriter, r *http.Request) {
 				cumulative := 0
 				digit := 0
 				for d := 0; d <= 9; d++ {
-					w := weights[fmt.Sprintf("%d", d)] + 1
+					dStr := fmt.Sprintf("%d", d)
+					w := weights[dStr] + 1
+					if pos > 0 && dStr == string(num[pos-1]) && twinBonus > 1 {
+						w *= twinBonus
+					}
 					cumulative += w
 					if rVal < cumulative {
 						digit = d
