@@ -13,7 +13,7 @@ func initDB() *sql.DB {
 	connStr := os.Getenv("DATABASE_URL")
 	if connStr == "" {
 		// Default local development string if none provided
-		connStr = "postgres://postgres:AA%40pgadmin%232025@localhost:5432/lottery_db?sslmode=disable"
+		connStr = "postgresql://postgres.ntnjxxincoavhwihtxgw:Ampha1%40.T0m@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres"
 	}
 
 	db, err := sql.Open("postgres", connStr)

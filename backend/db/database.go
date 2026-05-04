@@ -15,7 +15,7 @@ func InitDB() *sql.DB {
 	if connStr == "" {
 		// Use fallback from local development
 		log.Println("WARNING: DATABASE_URL not set, using local fallback connection string.")
-		connStr = "postgres://postgres:AA%40pgadmin%232025@localhost:5432/lottery_db?sslmode=disable"
+		connStr = "postgresql://postgres.ntnjxxincoavhwihtxgw:Ampha1%40.T0m@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres"
 	}
 	var err error
 	DB, err = sql.Open("postgres", connStr)
