@@ -326,26 +326,50 @@ func LocalPredictHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	patternSummary := "PATTERN: " + strings.Join(patterns, " ")
 
+	// 4. Rank Digits for Tiered Patterns
+	type digitRank struct {
+		digit string
+		count int
+	}
+	rankedFreqs := make([][]digitRank, digits)
+	for pos := 0; pos < digits; pos++ {
+		var ranks []digitRank
+		for d := 0; d <= 9; d++ {
+			dStr := fmt.Sprintf("%d", d)
+			ranks = append(ranks, digitRank{dStr, freqMap[pos][dStr]})
+		}
+		// Sort descending
+		for i := 0; i < len(ranks); i++ {
+			for j := i + 1; j < len(ranks); j++ {
+				if ranks[i].count < ranks[j].count {
+					ranks[i], ranks[j] = ranks[j], ranks[i]
+				}
+			}
+		}
+		rankedFreqs[pos] = ranks
+	}
+
 	for i := 0; i < count; i++ {
 		num := ""
 		method := "Frequentist Analysis"
 		
 		if i == 0 {
-			// First set is the "Pure Pattern" - absolute hottest digits
-			method = "Pure Pattern (Hottest)"
+			method = "🔥 HOT PATTERN (Rank #1)"
 			for pos := 0; pos < digits; pos++ {
-				maxFreq := -1
-				hotDigit := "0"
-				for d := 0; d <= 9; d++ {
-					dStr := fmt.Sprintf("%d", d)
-					if freqMap[pos][dStr] > maxFreq {
-						maxFreq = freqMap[pos][dStr]
-						hotDigit = dStr
-					}
-				}
-				num += hotDigit
+				num += rankedFreqs[pos][0].digit
+			}
+		} else if i == 1 {
+			method = "⚡ MEDIUM PATTERN (Rank #2)"
+			for pos := 0; pos < digits; pos++ {
+				num += rankedFreqs[pos][1].digit
+			}
+		} else if i == 2 {
+			method = "❄️ COLD PATTERN (Rank #3)"
+			for pos := 0; pos < digits; pos++ {
+				num += rankedFreqs[pos][2].digit
 			}
 		} else {
+			// Weighted Random for the rest
 			for pos := 0; pos < digits; pos++ {
 				weights := freqMap[pos]
 				totalWeight := 0
