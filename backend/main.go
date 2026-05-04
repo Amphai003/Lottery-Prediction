@@ -17,8 +17,10 @@ func main() {
 	database := db.InitDB()
 	defer database.Close()
 
-	// 2. Synchronize Live Data
-	_, _ = handlers.SyncData()
+	// 2. Synchronize Live Data (non-blocking)
+	go func() {
+		_, _ = handlers.SyncData()
+	}()
 
 	// 3. Register Business Routes
 	routes.RegisterRoutes()
@@ -63,7 +65,7 @@ func main() {
 	fmt.Printf("LottoAnalytica Backend [v4.1.0] - Stable Architecture\n")
 	fmt.Printf("Node status: ACTIVE | Port: %s\n", port)
 	
-	err := http.ListenAndServe(":"+port, nil)
+	err := http.ListenAndServe("0.0.0.0:"+port, nil)
 	if err != nil {
 		log.Fatal(err)
 	}
