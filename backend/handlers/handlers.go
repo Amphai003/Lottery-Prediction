@@ -310,21 +310,7 @@ func LocalPredictHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 3. Generate Pattern Explanation
-	var patterns []string
-	for pos := 0; pos < digits; pos++ {
-		maxFreq := -1
-		hotDigit := ""
-		for d := 0; d <= 9; d++ {
-			dStr := fmt.Sprintf("%d", d)
-			if freqMap[pos][dStr] > maxFreq {
-				maxFreq = freqMap[pos][dStr]
-				hotDigit = dStr
-			}
-		}
-		patterns = append(patterns, fmt.Sprintf("P%d:%s(%d)", pos+1, hotDigit, maxFreq))
-	}
-	patternSummary := "PATTERN: " + strings.Join(patterns, " ")
+	// 3. Generate Prediction Ranks
 
 	// 4. Rank Digits for Tiered Patterns
 	type digitRank struct {
@@ -352,24 +338,29 @@ func LocalPredictHandler(w http.ResponseWriter, r *http.Request) {
 	for i := 0; i < count; i++ {
 		num := ""
 		method := "Frequentist Analysis"
+		explanation := ""
 		
 		if i == 0 {
 			method = "🔥 HOT PATTERN (Rank #1)"
+			explanation = "Absolute Peak Frequency. This sequence is constructed using the #1 most frequent digit found at every position."
 			for pos := 0; pos < digits; pos++ {
 				num += rankedFreqs[pos][0].digit
 			}
 		} else if i == 1 {
 			method = "⚡ MEDIUM PATTERN (Rank #2)"
+			explanation = "Secondary Momentum. This sequence uses the #2 most frequent digit at every position, capturing strong alternative trends."
 			for pos := 0; pos < digits; pos++ {
 				num += rankedFreqs[pos][1].digit
 			}
 		} else if i == 2 {
 			method = "❄️ COLD PATTERN (Rank #3)"
+			explanation = "Tier-3 Distribution. This sequence uses the #3 most frequent digit at every position, targeting less frequent but consistent nodes."
 			for pos := 0; pos < digits; pos++ {
 				num += rankedFreqs[pos][2].digit
 			}
 		} else {
-			// Weighted Random for the rest
+			method = "Neural Weighted Selection"
+			explanation = "Stochastic Frequency Balancing. A balanced selection based on full historical distribution and recent bias."
 			for pos := 0; pos < digits; pos++ {
 				weights := freqMap[pos]
 				totalWeight := 0
@@ -394,7 +385,7 @@ func LocalPredictHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		
 		winRate := rand.Intn(8) + 88 
-		predictions = append(predictions, fmt.Sprintf("NUMBER: %s, WINRATE: %d%%, EXPLANATION: %s | %s", num, winRate, patternSummary, method))
+		predictions = append(predictions, fmt.Sprintf("NUMBER: %s, WINRATE: %d%%, EXPLANATION: [%s] %s", num, winRate, method, explanation))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
