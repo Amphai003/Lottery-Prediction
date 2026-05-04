@@ -26,26 +26,24 @@ func main() {
 	routes.RegisterRoutes()
 
 	// 4. Serve Static Frontend Files
-	// Check for environment variable to determine if we should serve static files
-	// (usually true in production)
 	staticDir := "frontend/build"
 	
 	// Create a catch-all handler for the frontend
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// If the request starts with /api/, it's handled by other routes
+		// If the request is for /api/, it MUST NOT be handled here.
+		// Go's DefaultServeMux should have already matched it to an API route.
+		// If we reach here with an /api/ path, it means the route doesn't exist.
 		if strings.HasPrefix(r.URL.Path, "/api/") {
+			http.NotFound(w, r)
 			return
 		}
 
-		// Get the absolute path to prevent directory traversal
-		path, err := filepath.Abs(filepath.Join(staticDir, r.URL.Path))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
+		// Clean the path to prevent directory traversal
+		cleanPath := filepath.Clean(r.URL.Path)
+		fullPath := filepath.Join(staticDir, cleanPath)
 
 		// Check if file exists and is not a directory
-		info, err := os.Stat(path)
+		info, err := os.Stat(fullPath)
 		if os.IsNotExist(err) || info.IsDir() {
 			// Serve index.html for SPA routing
 			http.ServeFile(w, r, filepath.Join(staticDir, "index.html"))
@@ -53,7 +51,7 @@ func main() {
 		}
 
 		// Otherwise serve the file normally
-		http.FileServer(http.Dir(staticDir)).ServeHTTP(w, r)
+		http.ServeFile(w, r, fullPath)
 	})
 
 	// 5. Start Server

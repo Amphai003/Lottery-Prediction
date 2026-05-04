@@ -65,12 +65,15 @@ function App() {
   // 📡 Data Synchronization Loop
   useEffect(() => {
     const syncAndFetch = async () => {
-      await lotteryApi.syncData()
-      fetchMainData()
-      fetchStats()
-    }
-    syncAndFetch()
-  }, [page])
+      // Start sync in background
+      lotteryApi.syncData().catch(err => console.error("Sync failed:", err));
+      
+      // Load local data immediately
+      fetchMainData();
+      fetchStats();
+    };
+    syncAndFetch();
+  }, [page]);
 
   // 🤖 Auto Calculated Generation on New Result
   useEffect(() => {

@@ -70,14 +70,25 @@ func GetHistoryHandler(w http.ResponseWriter, r *http.Request) {
 	SetCORS(w)
 	limit := r.URL.Query().Get("limit"); if limit == "" { limit = "100" }
 	offset := r.URL.Query().Get("offset"); if offset == "" { offset = "0" }
-	rows, _ := db.DB.Query(fmt.Sprintf("SELECT api_id, round_number, round_date, win_number FROM prize_history ORDER BY api_id DESC LIMIT %s OFFSET %s", limit, offset))
+	rows, err := db.DB.Query(fmt.Sprintf("SELECT api_id, round_number, round_date, win_number FROM prize_history ORDER BY api_id DESC LIMIT %s OFFSET %s", limit, offset))
+	if err != nil {
+		log.Printf("DB Error in GetHistory: %v", err)
+		http.Error(w, "Internal server error", 500)
+		return
+	}
 	defer rows.Close()
 	var results []map[string]interface{}
 	for rows.Next() {
-		var aid int; var rNum, wNum string; var t time.Time; rows.Scan(&aid, &rNum, &t, &wNum)
+		var aid int; var rNum, wNum string; var t time.Time; 
+		if err := rows.Scan(&aid, &rNum, &t, &wNum); err != nil {
+			continue
+		}
 		results = append(results, map[string]interface{}{"apiId": aid, "roundNumber": rNum, "roundDate": t.UTC(), "winNumber": wNum})
 	}
-	var total int; db.DB.QueryRow("SELECT COUNT(*) FROM prize_history").Scan(&total)
+	var total int; 
+	err = db.DB.QueryRow("SELECT COUNT(*) FROM prize_history").Scan(&total)
+	if err != nil { total = 0 }
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"data": results, "total": total})
 }
 
@@ -228,9 +239,19 @@ func AIPredictHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "OPTIONS" { return }
 	digits := r.URL.Query().Get("digits"); if digits == "" { digits = "6" }
 	count := r.URL.Query().Get("count"); if count == "" { count = "5" }
-	rows, _ := db.DB.Query("SELECT win_number FROM prize_history WHERE win_number != '' ORDER BY api_id DESC LIMIT 1000")
+	rows, err := db.DB.Query("SELECT win_number FROM prize_history WHERE win_number != '' ORDER BY api_id DESC LIMIT 1000")
+	if err != nil {
+		http.Error(w, "Failed to fetch history for AI", 500)
+		return
+	}
+	defer rows.Close()
 	var sb strings.Builder
-	for rows.Next() { var wN string; rows.Scan(&wN); sb.WriteString(wN + ",") }
+	for rows.Next() { 
+		var wN string; 
+		if err := rows.Scan(&wN); err == nil {
+			sb.WriteString(wN + ",") 
+		}
+	}
 	history := sb.String()
 	var wg sync.WaitGroup
 	var gptRes, geminiRes string
@@ -238,6 +259,7 @@ func AIPredictHandler(w http.ResponseWriter, r *http.Request) {
 	go func() { defer wg.Done(); gptRes = services.CallOpenAI(history, digits, count) }()
 	go func() { defer wg.Done(); geminiRes = services.CallGemini(history, digits, count) }()
 	wg.Wait()
+	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"gpt4_prediction": gptRes, "gemini_prediction": geminiRes})
 }
 
