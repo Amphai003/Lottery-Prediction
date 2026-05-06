@@ -27,7 +27,6 @@ function App() {
   const [geminiSets, setGeminiSets] = useState([])
   const [localSets, setLocalSets] = useState([])
   const [localFrequencies, setLocalFrequencies] = useState([])
-  const [autoSets, setAutoSets] = useState([])
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark')
 
   const PAGE_SIZE = 10
@@ -42,12 +41,10 @@ function App() {
     const cachedGem = localStorage.getItem('geminiSets')
     const cachedLoc = localStorage.getItem('localSets')
     const cachedFreq = localStorage.getItem('localFrequencies')
-    const cachedAuto = localStorage.getItem('autoSets')
     if (cachedGpt) setGptSets(JSON.parse(cachedGpt))
     if (cachedGem) setGeminiSets(JSON.parse(cachedGem))
     if (cachedLoc) setLocalSets(JSON.parse(cachedLoc))
     if (cachedFreq) setLocalFrequencies(JSON.parse(cachedFreq))
-    if (cachedAuto) setAutoSets(JSON.parse(cachedAuto))
 
     return () => clearInterval(timer)
   }, [])
@@ -59,92 +56,27 @@ function App() {
     localStorage.setItem('theme', theme)
   }, [theme])
 
-  // Update Cache
   useEffect(() => { if (gptSets.length && gptSets[0].numbers) localStorage.setItem('gptSets', JSON.stringify(gptSets)) }, [gptSets])
   useEffect(() => { if (geminiSets.length && geminiSets[0].numbers) localStorage.setItem('geminiSets', JSON.stringify(geminiSets)) }, [geminiSets])
   useEffect(() => { if (localSets.length && localSets[0].numbers) localStorage.setItem('localSets', JSON.stringify(localSets)) }, [localSets])
   useEffect(() => { if (localFrequencies.length) localStorage.setItem('localFrequencies', JSON.stringify(localFrequencies)) }, [localFrequencies])
-  useEffect(() => { if (autoSets.length) localStorage.setItem('autoSets', JSON.stringify(autoSets)) }, [autoSets])
 
   // 📡 Data Synchronization Loop
   useEffect(() => {
     const syncAndFetch = async () => {
-      // Start sync in background
-      lotteryApi.syncData().catch(err => console.error("Sync failed:", err));
+      // Start sync and wait for it to complete to ensure new results are processed
+      try {
+        await lotteryApi.syncData();
+      } catch (err) {
+        console.error("Sync failed:", err);
+      }
       
-      // Load local data immediately
+      // Load data after sync
       fetchMainData();
       fetchStats();
     };
     syncAndFetch();
   }, [page]);
-
-  // 🤖 Auto Calculated Generation on New Result
-  useEffect(() => {
-    // Only detect new results when we are truly looking at the latest data (page 0)
-    if (page === 0 && history.length > 0) {
-      const latestId = history[0].apiId;
-      const lastKnownId = localStorage.getItem('lastProcessedId');
-      
-      const todayDate = new Date().toLocaleDateString();
-      const lastGeneratedDate = localStorage.getItem('lastGeneratedDate');
-      
-      if (latestId && String(latestId) !== lastKnownId) {
-        // Prevent race condition when paginating back to page 0 with stale data
-        if (lastKnownId && latestId < parseInt(lastKnownId)) return;
-
-        // Ensure generation only happens once per day when lottery comes out
-        if (todayDate === lastGeneratedDate) {
-          localStorage.setItem('lastProcessedId', String(latestId));
-          return;
-        }
-
-        const fetchAutoCalculated = async () => {
-          try {
-            // Request probability-based numbers instead of pure random
-            const [res2D, res3D] = await Promise.all([
-              lotteryApi.runLocalPredict(2, 5),
-              lotteryApi.runLocalPredict(3, 5)
-            ]);
-            
-            // Inline parser to parse the calculated results safely
-            const parseInline = (raw, dId) => {
-              if (!raw) return [];
-              return raw.split('|||').map(p => {
-                const numMatch = p.match(/NUMBER:\s*(\d+)/);
-                const rateMatch = p.match(/WINRATE:\s*(\d+(\.\d+)?)%/);
-                let numbers = numMatch ? numMatch[1] : "".padStart(dId, "?");
-                if (numbers.length > dId) numbers = numbers.slice(-dId);
-                return { numbers, rate: rateMatch ? parseFloat(rateMatch[1]) : 75, source: 'auto' };
-              });
-            };
-
-            let newAutoCalculated = [];
-            if (res2D && res2D.prediction) {
-              newAutoCalculated = newAutoCalculated.concat(parseInline(res2D.prediction, 2));
-            }
-            if (res3D && res3D.prediction) {
-              newAutoCalculated = newAutoCalculated.concat(parseInline(res3D.prediction, 3));
-            }
-            
-            if (newAutoCalculated.length > 0) {
-              setAutoSets(newAutoCalculated);
-              localStorage.setItem('lastProcessedId', String(latestId));
-              localStorage.setItem('lastGeneratedDate', todayDate);
-              
-              // Auto-Vault these strategically calculated sets
-              const batch = newAutoCalculated.map(s => ({ numbers: s.numbers, probability: s.rate, source: 'auto' }));
-              await lotteryApi.saveBatch(batch);
-              fetchStats();
-            }
-          } catch (err) {
-            console.error("Auto calculation failed:", err);
-          }
-        };
-        fetchAutoCalculated();
-      }
-    }
-  }, [history, page])
 
   const fetchMainData = async () => {
     const res = await lotteryApi.getHistory(PAGE_SIZE, page * PAGE_SIZE)
@@ -243,6 +175,35 @@ function App() {
       ]
     }
   }, [allPredictions])
+
+  // Derive autoSets from allPredictions (ONLY show the most recent batch)
+  const autoSets = useMemo(() => {
+    const autoPool = allPredictions.filter(p => p.source === 'auto');
+    if (autoPool.length === 0) return [];
+    
+    // Find the newest timestamp and allow a 10-second window for the "batch"
+    const latestTime = new Date(autoPool[0].predicted_at).getTime();
+    
+    // Filter to latest batch and sort by digits (2D then 3D)
+    return autoPool
+      .filter(p => {
+        const pTime = new Date(p.predicted_at).getTime();
+        return Math.abs(latestTime - pTime) < 10000; // 10s window
+      })
+      .sort((a, b) => a.numbers.length - b.numbers.length || b.probability - a.probability)
+      .map(p => {
+        const dateObj = new Date(p.predicted_at);
+        const dateStr = dateObj.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        const timeStr = dateObj.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+        
+        return {
+          numbers: p.numbers,
+          rate: p.probability,
+          source: 'auto',
+          text: `BATCH: ${dateStr} [${timeStr}] | ${p.status === 'Pending Result' ? '🎯 PENDING NEXT' : '⌛ ' + p.status}`
+        };
+      });
+  }, [allPredictions]);
 
   const officialWinners = history.filter(h => h.winNumber && h.winNumber !== "").slice(0, 2)
   const currentICT = currentTime.toLocaleTimeString('en-GB')

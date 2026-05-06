@@ -1,8 +1,39 @@
 import React from 'react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import PredictionCard from './PredictionCard';
 
 const FrequencyAnalysis = ({ frequencies }) => {
   if (!frequencies || frequencies.length === 0) return null;
+
+  const exportPDF = () => {
+    const doc = new jsPDF();
+    doc.setFontSize(18);
+    doc.text("LottoAnalytica - Position Frequency Analysis", 14, 15);
+    doc.setFontSize(10);
+    doc.text(`Generated on: ${new Date().toLocaleString()}`, 14, 22);
+    
+    const tableRows = frequencies.map((posData, idx) => {
+      const row = [`P${idx + 1}`];
+      for (let i = 0; i <= 9; i++) {
+        row.push(posData[String(i)] || 0);
+      }
+      return row;
+    });
+
+    autoTable(doc, {
+      head: [['Pos', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9']],
+      body: tableRows,
+      startY: 30,
+      theme: 'striped',
+      headStyles: { fillColor: [79, 70, 229], textColor: [255, 255, 255] },
+      alternateRowStyles: { fillColor: [245, 247, 255] },
+      styles: { fontSize: 9, halign: 'center' },
+      columnStyles: { 0: { fontStyle: 'bold', halign: 'left' } }
+    });
+
+    doc.save(`LottoAnalytica_Pattern_Analysis_${new Date().toISOString().slice(0,10)}.pdf`);
+  };
 
   const getColorClass = (count, maxCount) => {
     if (count === 0) return 'opacity-10 grayscale';
@@ -20,7 +51,15 @@ const FrequencyAnalysis = ({ frequencies }) => {
           <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse shadow-[0_0_8px_#f59e0b]"></div>
           <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">Position Frequency Analysis</span>
         </div>
-        <span className="text-[7px] font-black text-zinc-600 uppercase tracking-widest px-2 py-0.5 bg-white/5 rounded-full border border-white/5">Real-time Node Mesh</span>
+        <div className="flex items-center gap-2">
+           <button 
+             onClick={exportPDF}
+             className="text-[7px] font-black text-indigo-400 uppercase tracking-widest px-2.5 py-1.5 bg-indigo-500/10 rounded-full border border-indigo-500/10 hover:bg-indigo-500 hover:text-white transition-all active:scale-95 shadow-lg"
+           >
+             Export PDF
+           </button>
+           <span className="text-[7px] font-black text-zinc-600 uppercase tracking-widest px-2 py-0.5 bg-white/5 rounded-full border border-white/5">Real-time Node Mesh</span>
+        </div>
       </div>
       <div className="overflow-x-auto custom-scrollbar-h pb-2 relative z-10">
         <table className="w-full text-[10px] text-zinc-500 min-w-[300px]">

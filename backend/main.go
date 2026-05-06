@@ -10,10 +10,26 @@ import (
 	"lottery-backend/db"
 	"lottery-backend/handlers"
 	"lottery-backend/routes"
+	"github.com/joho/godotenv"
 )
 
 func main() {
+	// 0. Load Environment Variables
+	err := godotenv.Load()
+	if err != nil {
+		log.Printf("Note: No .env file found or error loading it: %v", err)
+	} else {
+		log.Println(".env file loaded successfully")
+	}
+
 	// 1. Initialize Database
+	dbUrl := os.Getenv("DATABASE_URL")
+	if dbUrl == "" {
+		log.Println("WARNING: DATABASE_URL is EMPTY after loading .env")
+	} else {
+		log.Printf("DATABASE_URL is set (length: %d)", len(dbUrl))
+	}
+
 	database := db.InitDB()
 	defer database.Close()
 
@@ -63,7 +79,7 @@ func main() {
 	fmt.Printf("LottoAnalytica Backend [v4.1.0] - Stable Architecture\n")
 	fmt.Printf("Node status: ACTIVE | Port: %s\n", port)
 	
-	err := http.ListenAndServe("0.0.0.0:"+port, nil)
+	err = http.ListenAndServe("0.0.0.0:"+port, nil)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math/rand"
 	"net/http"
 	"strings"
 	"sync"
@@ -23,6 +22,7 @@ func SetCORS(w http.ResponseWriter) {
 
 func SyncData() (int, error) {
 	const dataURL = "https://laodl.com/api/website/laolot/WinPrizeHistory?type=1"
+	
 	resp, err := http.Get(dataURL)
 	if err != nil || resp == nil { 
 		return 0, fmt.Errorf("failed to fetch from source: %v", err)
@@ -53,6 +53,40 @@ func SyncData() (int, error) {
 		}
 	}
 	fmt.Printf("[%v] Sync complete. Processed %d records.\n", time.Now().Format("15:04:05"), count)
+
+	// 3. Smart Trigger: Ensure we have auto-predictions for the UPCOMING draw.
+	// We need a prediction that was made AFTER the latest result was released.
+	var lastWinDate time.Time
+	var lastWinID int
+	err = db.DB.QueryRow("SELECT round_date, api_id FROM prize_history WHERE win_number != '' ORDER BY api_id DESC LIMIT 1").Scan(&lastWinDate, &lastWinID)
+	
+	if err == nil {
+		// Check if we already have a FULL 'auto' prediction batch (10 items) made after this result
+		drawTime := lastWinDate.Add(20*time.Hour + 30*time.Minute)
+		
+		var batchCount int
+		db.DB.QueryRow("SELECT COUNT(*) FROM predictions WHERE source = 'auto' AND predicted_at > $1", drawTime).Scan(&batchCount)
+
+		if batchCount < 10 {
+			fmt.Printf("[%v] INCOMPLETE OR MISSING BATCH (Count: %d). Generating fresh 10-set...\n", time.Now().Format("15:04:05"), batchCount)
+			
+			go func() {
+				now := time.Now().UTC()
+				// Generate 2D
+				p2d := services.GenerateAutoPredictions(2, 5)
+				for _, p := range p2d {
+					db.DB.Exec("INSERT INTO predictions (numbers, probability, source, predicted_at) VALUES ($1, $2, $3, $4)", p.Numbers, p.Probability, "auto", now)
+				}
+				// Generate 3D
+				p3d := services.GenerateAutoPredictions(3, 5)
+				for _, p := range p3d {
+					db.DB.Exec("INSERT INTO predictions (numbers, probability, source, predicted_at) VALUES ($1, $2, $3, $4)", p.Numbers, p.Probability, "auto", now)
+				}
+				fmt.Printf("[%v] Auto-Batch (10 items) generated for upcoming draw.\n", time.Now().Format("15:04:05"))
+			}()
+		}
+	}
+
 	return count, nil
 }
 
@@ -192,13 +226,19 @@ func GetSavedPredictionsHandler(w http.ResponseWriter, r *http.Request) {
 		rows.Scan(&id, &num, &prob, &src, &at)
 		
 		// Map prediction timestamp to ICT day string
-		predictedDate := at.In(ict).Format("2006-01-02")
+		// Logic: If a prediction is made AFTER the draw time (20:30 ICT), 
+		// it should be evaluated against the NEXT draw, not today's.
+		ictTime := at.In(ict)
+		if ictTime.Hour() > 20 || (ictTime.Hour() == 20 && ictTime.Minute() >= 30) {
+			ictTime = ictTime.Add(24 * time.Hour)
+		}
+		predictedDateStr := ictTime.Format("2006-01-02")
 		
 		status := "Lost Case"
-		winners, found := winMap[predictedDate]
+		winners, found := winMap[predictedDateStr]
 		
 		if found {
-			// A winner exists for this EXACT day
+			// A winner exists for this targeted day
 			isWin := false
 			for _, winNum := range winners {
 				if strings.HasSuffix(winNum, num) {
@@ -214,7 +254,7 @@ func GetSavedPredictionsHandler(w http.ResponseWriter, r *http.Request) {
 		} else {
 			// No winner recorded for this date yet
 			// If it's today (local) or after our latest known draw, it's pending
-			if predictedDate == todayDateStr || at.After(lastDrawDate) {
+			if predictedDateStr == todayDateStr || at.After(lastDrawDate) {
 				status = "Pending Result"
 			} else {
 				// Past date with no result found -> Missed Round
@@ -270,155 +310,16 @@ func LocalPredictHandler(w http.ResponseWriter, r *http.Request) {
 	countStr := r.URL.Query().Get("count"); if countStr == "" { countStr = "5" }
 	count := 5; fmt.Sscanf(countStr, "%d", &count)
 
-	// 1. Fetch last 100 winning numbers
-	rows, err := db.DB.Query("SELECT win_number FROM prize_history WHERE win_number != '' ORDER BY api_id DESC LIMIT 100")
-	var history []string
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var wNum string
-			if err := rows.Scan(&wNum); err == nil {
-				history = append(history, strings.ReplaceAll(wNum, " ", "")) 
-			}
-		}
-	}
+	predictions, freqMap := services.GeneratePredictions(digits, count)
 
-	rand.Seed(time.Now().UnixNano())
-	var predictions []string
-
-	// 2. Frequency Logic
-	freqMap := make([]map[string]int, digits)
-	for i := 0; i < digits; i++ {
-		freqMap[i] = make(map[string]int)
-		for d := 0; d <= 9; d++ {
-			freqMap[i][fmt.Sprintf("%d", d)] = 0
-		}
-	}
-
-	for hIndex, h := range history {
-		if len(h) < digits { continue }
-		suffix := h[len(h)-digits:]
-		
-		weight := 1
-		if hIndex < 30 { weight = 2 }
-		if hIndex < 10 { weight = 3 }
-		if hIndex < 3 { weight = 4 }
-
-		for i, char := range suffix {
-			dStr := string(char)
-			freqMap[i][dStr] += weight
-		}
-	}
-
-	// 3. Analyze Twin Frequency (Doubles like 99, 88)
-	twinCount := 0
-	for _, h := range history {
-		for i := 0; i < len(h)-1; i++ {
-			if h[i] == h[i+1] {
-				twinCount++
-			}
-		}
-	}
-	twinRate := float64(twinCount) / float64(len(history)*digits)
-	twinBonus := 1
-	if twinRate > 0.05 { twinBonus = 2 } // If doubles are common, boost them
-	if twinRate > 0.10 { twinBonus = 3 }
-
-	// 4. Generate Prediction Ranks
-
-	// 4. Rank Digits for Tiered Patterns
-	type digitRank struct {
-		digit string
-		count int
-	}
-	rankedFreqs := make([][]digitRank, digits)
-	for pos := 0; pos < digits; pos++ {
-		var ranks []digitRank
-		for d := 0; d <= 9; d++ {
-			dStr := fmt.Sprintf("%d", d)
-			ranks = append(ranks, digitRank{dStr, freqMap[pos][dStr]})
-		}
-		// Sort descending
-		for i := 0; i < len(ranks); i++ {
-			for j := i + 1; j < len(ranks); j++ {
-				if ranks[i].count < ranks[j].count {
-					ranks[i], ranks[j] = ranks[j], ranks[i]
-				}
-			}
-		}
-		rankedFreqs[pos] = ranks
-	}
-
-	for i := 0; i < count; i++ {
-		num := ""
-		method := "Frequentist Analysis"
-		explanation := ""
-		
-		if i == 0 {
-			method = "🔥 HOT PATTERN (Rank #1)"
-			explanation = "Absolute Peak Frequency. This sequence is constructed using the #1 most frequent digit found at every position."
-			for pos := 0; pos < digits; pos++ {
-				num += rankedFreqs[pos][0].digit
-			}
-		} else if i == 1 {
-			method = "⚡ MEDIUM PATTERN (Rank #2)"
-			explanation = "Secondary Momentum. This sequence uses the #2 most frequent digit at every position, capturing strong alternative trends."
-			for pos := 0; pos < digits; pos++ {
-				num += rankedFreqs[pos][1].digit
-			}
-		} else if i == 2 {
-			method = "❄️ COLD PATTERN (Rank #3)"
-			explanation = "Tier-3 Distribution. This sequence uses the #3 most frequent digit at every position, targeting less frequent but consistent nodes."
-			for pos := 0; pos < digits; pos++ {
-				num += rankedFreqs[pos][2].digit
-			}
-			
-		} else {
-			method = "Neural Weighted Selection"
-			explanation = "Stochastic Frequency Balancing. "
-			if twinBonus > 1 {
-				explanation += "Neural Twin Detection active (Double Digit Bias). "
-			}
-			explanation += "Balanced selection based on historical distribution."
-
-			for pos := 0; pos < digits; pos++ {
-				weights := freqMap[pos]
-				totalWeight := 0
-				for d := 0; d <= 9; d++ {
-					dStr := fmt.Sprintf("%d", d)
-					w := weights[dStr] + 1 
-					if pos > 0 && dStr == string(num[pos-1]) && twinBonus > 1 {
-						w *= twinBonus
-					}
-					totalWeight += w
-				}
-
-				rVal := rand.Intn(totalWeight)
-				cumulative := 0
-				digit := 0
-				for d := 0; d <= 9; d++ {
-					dStr := fmt.Sprintf("%d", d)
-					w := weights[dStr] + 1
-					if pos > 0 && dStr == string(num[pos-1]) && twinBonus > 1 {
-						w *= twinBonus
-					}
-					cumulative += w
-					if rVal < cumulative {
-						digit = d
-						break
-					}
-				}
-				num += fmt.Sprintf("%d", digit)
-			}
-		}
-		
-		winRate := rand.Intn(8) + 88 
-		predictions = append(predictions, fmt.Sprintf("NUMBER: %s, WINRATE: %d%%, EXPLANATION: [%s] %s", num, winRate, method, explanation))
+	var pStrings []string
+	for _, p := range predictions {
+		pStrings = append(pStrings, fmt.Sprintf("NUMBER: %s, WINRATE: %.0f%%, EXPLANATION: %s", p.Numbers, p.Probability, p.Explanation))
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"prediction":  strings.Join(predictions, "|||"),
+		"prediction":  strings.Join(pStrings, "|||"),
 		"frequencies": freqMap,
 	})
 }
