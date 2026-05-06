@@ -20,7 +20,15 @@ func SetCORS(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 }
 
+var (
+	syncMutex sync.Mutex
+)
+
 func SyncData() (int, error) {
+	// 1. Prevent concurrent syncs from triggering multiple auto-predictions
+	syncMutex.Lock()
+	defer syncMutex.Unlock()
+
 	const dataURL = "https://laodl.com/api/website/laolot/WinPrizeHistory?type=1"
 	
 	resp, err := http.Get(dataURL)
@@ -61,29 +69,33 @@ func SyncData() (int, error) {
 	err = db.DB.QueryRow("SELECT round_date, api_id FROM prize_history WHERE win_number != '' ORDER BY api_id DESC LIMIT 1").Scan(&lastWinDate, &lastWinID)
 	
 	if err == nil {
-		// Check if we already have a FULL 'auto' prediction batch (10 items) made after this result
-		drawTime := lastWinDate.Add(20*time.Hour + 30*time.Minute)
+		// 3. Smart Trigger: Ensure we have auto-predictions for the UPCOMING draw.
+		// We need a prediction that was made AFTER the latest result was released.
+		ict := time.FixedZone("ICT", 7*3600)
+		
+		// lastWinDate is the date part of the draw. The result is out at 20:30 ICT.
+		// We calculate the exact time that result was released.
+		drawTime := time.Date(lastWinDate.Year(), lastWinDate.Month(), lastWinDate.Day(), 20, 30, 0, 0, ict)
 		
 		var batchCount int
-		db.DB.QueryRow("SELECT COUNT(*) FROM predictions WHERE source = 'auto' AND predicted_at > $1", drawTime).Scan(&batchCount)
+		// Check how many 'auto' predictions exist after that specific draw time
+		db.DB.QueryRow("SELECT COUNT(*) FROM predictions WHERE source = 'auto' AND predicted_at > $1", drawTime.UTC()).Scan(&batchCount)
 
 		if batchCount < 10 {
-			fmt.Printf("[%v] INCOMPLETE OR MISSING BATCH (Count: %d). Generating fresh 10-set...\n", time.Now().Format("15:04:05"), batchCount)
+			fmt.Printf("[%v] INCOMPLETE BATCH (Count: %d). Generating fresh 10-set for upcoming draw...\n", time.Now().Format("15:04:05"), batchCount)
 			
-			go func() {
-				now := time.Now().UTC()
-				// Generate 2D
-				p2d := services.GenerateAutoPredictions(2, 5)
-				for _, p := range p2d {
-					db.DB.Exec("INSERT INTO predictions (numbers, probability, source, predicted_at) VALUES ($1, $2, $3, $4)", p.Numbers, p.Probability, "auto", now)
-				}
-				// Generate 3D
-				p3d := services.GenerateAutoPredictions(3, 5)
-				for _, p := range p3d {
-					db.DB.Exec("INSERT INTO predictions (numbers, probability, source, predicted_at) VALUES ($1, $2, $3, $4)", p.Numbers, p.Probability, "auto", now)
-				}
-				fmt.Printf("[%v] Auto-Batch (10 items) generated for upcoming draw.\n", time.Now().Format("15:04:05"))
-			}()
+			now := time.Now().UTC()
+			// Generate 2D
+			p2d := services.GenerateAutoPredictions(2, 5)
+			for _, p := range p2d {
+				db.DB.Exec("INSERT INTO predictions (numbers, probability, source, predicted_at) VALUES ($1, $2, $3, $4)", p.Numbers, p.Probability, "auto", now)
+			}
+			// Generate 3D
+			p3d := services.GenerateAutoPredictions(3, 5)
+			for _, p := range p3d {
+				db.DB.Exec("INSERT INTO predictions (numbers, probability, source, predicted_at) VALUES ($1, $2, $3, $4)", p.Numbers, p.Probability, "auto", now)
+			}
+			fmt.Printf("[%v] Auto-Batch (10 items) generated and saved.\n", time.Now().Format("15:04:05"))
 		}
 	}
 
