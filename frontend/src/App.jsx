@@ -64,16 +64,21 @@ function App() {
   // 📡 Data Synchronization Loop
   useEffect(() => {
     const syncAndFetch = async () => {
-      // Start sync and wait for it to complete to ensure new results are processed
+      // 1. Initial Load (Fast) - Show what's in DB immediately
+      fetchMainData();
+      fetchStats();
+
+      // 2. Background Sync
       try {
-        await lotteryApi.syncData();
+        const syncRes = await lotteryApi.syncData();
+        // 3. If sync actually processed new records, refresh to show them
+        if (syncRes && syncRes.count > 0) {
+          fetchMainData();
+          fetchStats();
+        }
       } catch (err) {
         console.error("Sync failed:", err);
       }
-      
-      // Load data after sync
-      fetchMainData();
-      fetchStats();
     };
     syncAndFetch();
   }, [page]);
