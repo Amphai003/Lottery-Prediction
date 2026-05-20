@@ -22,7 +22,7 @@ export const useArchive = () => {
       const manualPredictions = res.filter(p => p.source !== 'auto');
 
       const groupData = (list) => list.reduce((acc, p) => {
-        const date = new Date(p.predicted_at).toLocaleDateString('en-GB');
+        const date = p.targetDate || new Date(p.predicted_at).toLocaleDateString('en-GB');
         if (!acc[date]) acc[date] = [];
         acc[date].push(p);
         return acc;

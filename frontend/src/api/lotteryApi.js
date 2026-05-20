@@ -1,38 +1,30 @@
-const BASE_URL = '/api';
+import axiosInstance from './axiosInstance';
 
 export const lotteryApi = {
   getHistory: (limit, offset) => 
-    fetch(`${BASE_URL}/history?limit=${limit}&offset=${offset}`).then(r => r.json()),
+    axiosInstance.get(`/history`, { params: { limit, offset } }),
     
   getPredictions: () => 
-    fetch(`${BASE_URL}/predictions`).then(r => r.json()),
+    axiosInstance.get(`/predictions`),
     
-  savePrediction: (numbers, probability, source = 'manual') => 
-    fetch(`${BASE_URL}/save-prediction`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ numbers, probability, source })
-    }).then(r => r.json()),
+  savePrediction: (numbers, probability, source = 'manual', explanation = '') => 
+    axiosInstance.post(`/save-prediction`, { numbers, probability, source, explanation }),
     
   saveBatch: (batch) => 
-    fetch(`${BASE_URL}/save-batch`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(batch)
-    }).then(r => r.json()),
+    axiosInstance.post(`/save-batch`, batch),
     
   deletePrediction: (id) => 
-    fetch(`${BASE_URL}/delete-prediction?id=${id}`).then(r => r.json()),
+    axiosInstance.get(`/delete-prediction`, { params: { id } }),
     
   purge: (source) => 
-    fetch(`${BASE_URL}/purge?source=${source}`).then(r => r.json()),
+    axiosInstance.get(`/purge`, { params: { source } }),
     
   runAIPredict: (digits, count) => 
-    fetch(`${BASE_URL}/ai-predict?digits=${digits}&count=${count}`, { method: 'POST' }).then(r => r.json()),
+    axiosInstance.post(`/ai-predict`, null, { params: { digits, count } }),
     
   runLocalPredict: (digits, count) => 
-    fetch(`${BASE_URL}/local-predict?digits=${digits}&count=${count}`).then(r => r.json()),
+    axiosInstance.get(`/local-predict`, { params: { digits, count } }),
     
   syncData: () => 
-    fetch(`${BASE_URL}/sync`).then(r => r.json())
+    axiosInstance.get(`/sync`)
 };

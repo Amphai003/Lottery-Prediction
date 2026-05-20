@@ -1,6 +1,10 @@
 import { useState, useEffect, useMemo } from 'react'
+import { useDispatch, useSelector } from 'react-redux'
 import Swal from 'sweetalert2'
 import './App.css'
+
+// Redux Actions
+import { fetchHistory, fetchPredictions, syncData, runLocalPredict, setLocalSets, setLocalFrequencies } from './store/slices/lotterySlice'
 
 // Architecture Core
 import { lotteryApi } from './api/lotteryApi'
@@ -13,10 +17,17 @@ import PredictionNodes from './components/PredictionNodes'
 import Registry from './components/Registry'
 
 function App() {
+  const dispatch = useDispatch()
+  const { 
+    history, 
+    totalHistory: total, 
+    allPredictions, 
+    loading,
+    localSets: reduxLocalSets,
+    localFrequencies: reduxLocalFrequencies 
+  } = useSelector(state => state.lottery)
+
   const [isAILoading, setIsAILoading] = useState(false)
-  const [history, setHistory] = useState([])
-  const [allPredictions, setAllPredictions] = useState([])
-  const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
   const [digits, setDigits] = useState(6)
   const [count, setCount] = useState(5)
@@ -25,8 +36,8 @@ function App() {
   
   const [gptSets, setGptSets] = useState([])
   const [geminiSets, setGeminiSets] = useState([])
-  const [localSets, setLocalSets] = useState([])
-  const [localFrequencies, setLocalFrequencies] = useState([])
+  const [localSets, setLocalSetsState] = useState([])
+  const [localFrequencies, setLocalFrequenciesState] = useState([])
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark')
 
   const PAGE_SIZE = 10
@@ -43,8 +54,8 @@ function App() {
     const cachedFreq = localStorage.getItem('localFrequencies')
     if (cachedGpt) setGptSets(JSON.parse(cachedGpt))
     if (cachedGem) setGeminiSets(JSON.parse(cachedGem))
-    if (cachedLoc) setLocalSets(JSON.parse(cachedLoc))
-    if (cachedFreq) setLocalFrequencies(JSON.parse(cachedFreq))
+    if (cachedLoc) setLocalSetsState(JSON.parse(cachedLoc))
+    if (cachedFreq) setLocalFrequenciesState(JSON.parse(cachedFreq))
 
     return () => clearInterval(timer)
   }, [])
@@ -65,32 +76,30 @@ function App() {
   useEffect(() => {
     const syncAndFetch = async () => {
       // 1. Initial Load (Fast) - Show what's in DB immediately
-      fetchMainData();
-      fetchStats();
+      dispatch(fetchHistory({ limit: PAGE_SIZE, offset: page * PAGE_SIZE }));
+      dispatch(fetchPredictions());
 
       // 2. Background Sync
       try {
-        const syncRes = await lotteryApi.syncData();
+        const syncRes = await dispatch(syncData()).unwrap();
         // 3. If sync actually processed new records, refresh to show them
         if (syncRes && syncRes.count > 0) {
-          fetchMainData();
-          fetchStats();
+          dispatch(fetchHistory({ limit: PAGE_SIZE, offset: page * PAGE_SIZE }));
+          dispatch(fetchPredictions());
         }
       } catch (err) {
         console.error("Sync failed:", err);
       }
     };
     syncAndFetch();
-  }, [page]);
+  }, [page, dispatch]);
 
-  const fetchMainData = async () => {
-    const res = await lotteryApi.getHistory(PAGE_SIZE, page * PAGE_SIZE)
-    if (res) { setHistory(res.data); setTotal(res.total); }
+  const fetchMainData = () => {
+    dispatch(fetchHistory({ limit: PAGE_SIZE, offset: page * PAGE_SIZE }));
   }
 
-  const fetchStats = async () => {
-    const res = await lotteryApi.getPredictions()
-    if (res) setAllPredictions(res)
+  const fetchStats = () => {
+    dispatch(fetchPredictions());
   }
 
   const parseSets = (raw) => {
@@ -106,25 +115,17 @@ function App() {
   }
 
   const runDualForecast = async () => {
-    /* AI DISCONTINUED: NO API KEY
-    setIsAILoading(true)
-    setGptSets([{ text: "Alpha Node: Syncing Neural Mesh..." }])
-    setGeminiSets([{ text: "Beta Node: Harvesting Stream Data..." }])
-    try {
-      const res = await lotteryApi.runAIPredict(digits, count)
-      if (res) { setGptSets(parseSets(res.gpt4_prediction)); setGeminiSets(parseSets(res.gemini_prediction)); }
-    } finally { setIsAILoading(false) }
-    */
+    /* AI DISCONTINUED */
   }
 
   const runLocalForecast = async () => {
     setIsAILoading(true)
-    setLocalSets([{ text: "Simulating Local Node Consensus..." }])
+    setLocalSetsState([{ text: "Simulating Local Node Consensus..." }])
     try {
       const res = await lotteryApi.runLocalPredict(digits, count)
       if (res) {
-        if (res.prediction) setLocalSets(parseSets(res.prediction))
-        if (res.frequencies) setLocalFrequencies(res.frequencies)
+        if (res.prediction) setLocalSetsState(parseSets(res.prediction))
+        if (res.frequencies) setLocalFrequenciesState(res.frequencies)
       }
     } finally { setIsAILoading(false) }
   }
@@ -171,8 +172,8 @@ function App() {
       wins, losses, pending, total: allPredictions.length, winRate,
       autoWinRate: calculateRate(autoPredictions),
       manualWinRate: calculateRate(manualPredictions),
-      autoTotal: autoPredictions.length,
-      manualTotal: manualPredictions.length,
+      autoTotal: autoPredictions.filter(p => p.status === 'Pending Result').length,
+      manualTotal: manualPredictions.filter(p => p.status === 'Pending Result').length,
       chartData: [
         { name: 'Wins', value: wins, color: '#10b981' }, 
         { name: 'Losses', value: losses, color: '#f43f5e' }, 
@@ -181,15 +182,12 @@ function App() {
     }
   }, [allPredictions])
 
-  // Derive autoSets from allPredictions (ONLY show the most recent batch)
   const autoSets = useMemo(() => {
     const autoPool = allPredictions.filter(p => p.source === 'auto');
     if (autoPool.length === 0) return [];
     
-    // Find the newest timestamp and allow a 10-second window for the "batch"
     const latestTime = new Date(autoPool[0].predicted_at).getTime();
     
-    // Filter to latest batch and sort by digits (2D then 3D)
     return autoPool
       .filter(p => {
         const pTime = new Date(p.predicted_at).getTime();
@@ -201,11 +199,17 @@ function App() {
         const dateStr = dateObj.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
         const timeStr = dateObj.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
         
+        let strategyPrefix = "";
+        if (p.explanation && p.explanation.includes("[")) {
+          const match = p.explanation.match(/\[(.*?)\]/);
+          if (match) strategyPrefix = `[${match[1]}] `;
+        }
+
         return {
           numbers: p.numbers,
           rate: p.probability,
           source: 'auto',
-          text: `BATCH: ${dateStr} [${timeStr}] | ${p.status === 'Pending Result' ? '🎯 PENDING NEXT' : '⌛ ' + p.status}`
+          text: `${strategyPrefix}BATCH: ${dateStr} [${timeStr}] | ${p.status === 'Pending Result' ? '🎯 PENDING NEXT' : '⌛ ' + p.status}`
         };
       });
   }, [allPredictions]);
@@ -221,7 +225,7 @@ function App() {
         count={count} setCount={setCount} isAILoading={isAILoading}
         runDualForecast={runDualForecast} runLocalForecast={runLocalForecast}
         showArchive={() => showArchive(fetchStats)}
-        resetPredictions={() => { setGptSets([]); setGeminiSets([]); setLocalSets([]); }}
+        resetPredictions={() => { setGptSets([]); setGeminiSets([]); setLocalSetsState([]); }}
         theme={theme} setTheme={setTheme}
         latestResult={officialWinners[0]}
       />
@@ -241,7 +245,7 @@ function App() {
       />
 
       <footer className="footer text-center pt-24 border-t border-white/5 text-[11px] font-black text-zinc-800 uppercase tracking-[1.2em] pb-16 opacity-30">
-        LottoAnalytica DeepMind Cluster — v4.5.1 Modular Stable
+        LottoAnalytica DeepMind Cluster — v4.6.0 Intelligence Optimized
       </footer>
     </div>
   )
