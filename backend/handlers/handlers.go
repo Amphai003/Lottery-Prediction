@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,6 +24,27 @@ func SetCORS(w http.ResponseWriter) {
 var (
 	syncMutex sync.Mutex
 )
+
+// GetNextDrawTime calculates the upcoming draw date/time (Mon, Wed, Fri at 20:30 ICT)
+func GetNextDrawTime(t time.Time) time.Time {
+	ict := time.FixedZone("ICT", 7*3600)
+	t = t.In(ict)
+
+	// If it's already past today's draw time, start looking from tomorrow
+	if t.Hour() > 20 || (t.Hour() == 20 && t.Minute() >= 30) {
+		t = t.AddDate(0, 0, 1)
+	}
+	// Reset to start of day for the search
+	t = time.Date(t.Year(), t.Month(), t.Day(), 20, 30, 0, 0, ict)
+
+	for {
+		wd := t.Weekday()
+		if wd == time.Monday || wd == time.Wednesday || wd == time.Friday {
+			return t
+		}
+		t = t.AddDate(0, 0, 1)
+	}
+}
 
 func SyncData() (int, error) {
 	// 1. Prevent concurrent syncs from triggering multiple auto-predictions
@@ -63,39 +85,44 @@ func SyncData() (int, error) {
 	fmt.Printf("[%v] Sync complete. Processed %d records.\n", time.Now().Format("15:04:05"), count)
 
 	// 3. Smart Trigger: Ensure we have auto-predictions for the UPCOMING draw.
-	// We need a prediction that was made AFTER the latest result was released.
 	var lastWinDate time.Time
-	var lastWinID int
-	err = db.DB.QueryRow("SELECT round_date, api_id FROM prize_history WHERE win_number != '' ORDER BY api_id DESC LIMIT 1").Scan(&lastWinDate, &lastWinID)
+	err = db.DB.QueryRow("SELECT round_date FROM prize_history WHERE win_number != '' ORDER BY api_id DESC LIMIT 1").Scan(&lastWinDate)
 	
 	if err == nil {
-		// 3. Smart Trigger: Ensure we have auto-predictions for the UPCOMING draw.
-		// We need a prediction that was made AFTER the latest result was released.
 		ict := time.FixedZone("ICT", 7*3600)
+		now := time.Now().In(ict)
 		
-		// lastWinDate is the date part of the draw. The result is out at 20:30 ICT.
-		// We calculate the exact time that result was released.
+		// The 'cutoff' is the time the latest available result was released.
 		drawTime := time.Date(lastWinDate.Year(), lastWinDate.Month(), lastWinDate.Day(), 20, 30, 0, 0, ict)
 		
+		// If drawTime is in the future (gap between 00:00 and 20:30 of the draw day),
+		// we check for predictions made after the PREVIOUS draw.
+		if drawTime.After(now) {
+			drawTime = drawTime.AddDate(0, 0, -1)
+		}
+
 		var batchCount int
-		// Check how many 'auto' predictions exist after that specific draw time
 		db.DB.QueryRow("SELECT COUNT(*) FROM predictions WHERE source = 'auto' AND predicted_at > $1", drawTime.UTC()).Scan(&batchCount)
 
+		// Check if we already have a batch for the NEXT draw.
+		// If we have at least 1 prediction, we consider the batch "initiated".
+		// We use 10 as a safer threshold in case of partial failures, but the goal is "once per cycle".
 		if batchCount < 10 {
-			fmt.Printf("[%v] INCOMPLETE BATCH (Count: %d). Generating fresh 10-set for upcoming draw...\n", time.Now().Format("15:04:05"), batchCount)
+			fmt.Printf("[%v] NO RECENT BATCH (Count: %d). Generating fresh 15-set for upcoming draw...\n", time.Now().Format("15:04:05"), batchCount)
 			
-			now := time.Now().UTC()
-			// Generate 2D
-			p2d := services.GenerateAutoPredictions(2, 5)
-			for _, p := range p2d {
-				db.DB.Exec("INSERT INTO predictions (numbers, probability, source, predicted_at) VALUES ($1, $2, $3, $4)", p.Numbers, p.Probability, "auto", now)
+			saveTime := time.Now().UTC()
+			configs := []struct{ d, c int }{{2, 5}, {3, 5}, {4, 3}, {5, 1}, {6, 1}}
+			
+			for _, conf := range configs {
+				preds := services.GenerateAutoPredictions(conf.d, conf.c)
+				for _, p := range preds {
+					_, err := db.DB.Exec("INSERT INTO predictions (numbers, probability, source, explanation, predicted_at) VALUES ($1, $2, $3, $4, $5)", p.Numbers, p.Probability, "auto", p.Explanation, saveTime)
+					if err != nil {
+						log.Printf("ERROR: Failed to save auto-prediction: %v", err)
+					}
+				}
 			}
-			// Generate 3D
-			p3d := services.GenerateAutoPredictions(3, 5)
-			for _, p := range p3d {
-				db.DB.Exec("INSERT INTO predictions (numbers, probability, source, predicted_at) VALUES ($1, $2, $3, $4)", p.Numbers, p.Probability, "auto", now)
-			}
-			fmt.Printf("[%v] Auto-Batch (10 items) generated and saved.\n", time.Now().Format("15:04:05"))
+			fmt.Printf("[%v] Auto-Batch (15 items) generated and saved.\n", time.Now().Format("15:04:05"))
 		}
 	}
 
@@ -145,6 +172,7 @@ func SaveBatchHandler(w http.ResponseWriter, r *http.Request) {
 		Numbers     string  `json:"numbers"` 
 		Probability float64 `json:"probability"` 
 		Source      string  `json:"source"`
+		Explanation string  `json:"explanation"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&batch); err != nil {
 		log.Printf("ERROR: Failed to decode batch: %v", err)
@@ -157,7 +185,7 @@ func SaveBatchHandler(w http.ResponseWriter, r *http.Request) {
 		if p.Numbers != "" { 
 			src := p.Source
 			if src == "" { src = "manual" }
-			db.DB.Exec("INSERT INTO predictions (numbers, probability, source, predicted_at) VALUES ($1, $2, $3, $4)", p.Numbers, p.Probability, src, now) 
+			db.DB.Exec("INSERT INTO predictions (numbers, probability, source, explanation, predicted_at) VALUES ($1, $2, $3, $4, $5)", p.Numbers, p.Probability, src, p.Explanation, now) 
 		}
 	}
 	fmt.Fprint(w, `{"status":"ok"}`)
@@ -170,11 +198,12 @@ func SavePredictionHandler(w http.ResponseWriter, r *http.Request) {
 		Numbers     string  `json:"numbers"` 
 		Probability float64 `json:"probability"` 
 		Source      string  `json:"source"` 
+		Explanation string  `json:"explanation"`
 	}
 	json.NewDecoder(r.Body).Decode(&p)
 	now := time.Now().UTC()
 	src := p.Source; if src == "" { src = "manual" }
-	db.DB.Exec("INSERT INTO predictions (numbers, probability, source, predicted_at) VALUES ($1, $2, $3, $4)", p.Numbers, p.Probability, src, now)
+	db.DB.Exec("INSERT INTO predictions (numbers, probability, source, explanation, predicted_at) VALUES ($1, $2, $3, $4, $5)", p.Numbers, p.Probability, src, p.Explanation, now)
 	fmt.Fprint(w, `{"status":"ok"}`)
 }
 
@@ -182,7 +211,14 @@ func DeletePredictionHandler(w http.ResponseWriter, r *http.Request) {
 	SetCORS(w)
 	if r.Method == "OPTIONS" { return }
 	id := r.URL.Query().Get("id")
-	db.DB.Exec("DELETE FROM predictions WHERE id = $1", id)
+	res, err := db.DB.Exec("DELETE FROM predictions WHERE id = $1", id)
+	if err != nil {
+		log.Printf("ERROR: Failed to delete prediction %s: %v", id, err)
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	rows, _ := res.RowsAffected()
+	log.Printf("DELETE: Removed prediction ID %s (Rows: %d)", id, rows)
 	fmt.Fprint(w, `{"status":"ok"}`)
 }
 
@@ -190,11 +226,23 @@ func PurgeHandler(w http.ResponseWriter, r *http.Request) {
 	SetCORS(w)
 	if r.Method == "OPTIONS" { return }
 	source := r.URL.Query().Get("source")
+	var res sql.Result
+	var err error
 	if source == "" {
-		db.DB.Exec("DELETE FROM predictions")
+		log.Println("PURGE: Deleting ALL predictions from database")
+		res, err = db.DB.Exec("DELETE FROM predictions")
 	} else {
-		db.DB.Exec("DELETE FROM predictions WHERE source = $1", source)
+		log.Printf("PURGE: Deleting all predictions for source: %s", source)
+		res, err = db.DB.Exec("DELETE FROM predictions WHERE source = $1", source)
 	}
+	
+	if err != nil {
+		log.Printf("ERROR: Purge failed: %v", err)
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	rows, _ := res.RowsAffected()
+	log.Printf("PURGE: Success. Removed %d records.", rows)
 	fmt.Fprint(w, `{"status":"ok"}`)
 }
 
@@ -225,7 +273,7 @@ func GetSavedPredictionsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2. Evaluate each prediction based on its specific date
-	rows, _ := db.DB.Query("SELECT id, numbers, probability, source, predicted_at FROM predictions ORDER BY predicted_at DESC LIMIT 500")
+	rows, _ := db.DB.Query("SELECT id, numbers, probability, source, explanation, predicted_at FROM predictions ORDER BY predicted_at DESC LIMIT 500")
 	if rows == nil { 
 		json.NewEncoder(w).Encode([]interface{}{})
 		return 
@@ -234,17 +282,13 @@ func GetSavedPredictionsHandler(w http.ResponseWriter, r *http.Request) {
 	
 	var results []map[string]interface{}
 	for rows.Next() {
-		var id int; var num, src string; var prob float64; var at time.Time
-		rows.Scan(&id, &num, &prob, &src, &at)
+		var id int; var num, src, expl string; var prob float64; var at time.Time
+		rows.Scan(&id, &num, &prob, &src, &expl, &at)
 		
-		// Map prediction timestamp to ICT day string
-		// Logic: If a prediction is made AFTER the draw time (20:30 ICT), 
-		// it should be evaluated against the NEXT draw, not today's.
-		ictTime := at.In(ict)
-		if ictTime.Hour() > 20 || (ictTime.Hour() == 20 && ictTime.Minute() >= 30) {
-			ictTime = ictTime.Add(24 * time.Hour)
-		}
-		predictedDateStr := ictTime.Format("2006-01-02")
+		// Map prediction timestamp to the ACTUAL Target Draw Date
+		// This ensures predictions made on Saturday/Sunday correctly map to Monday's draw.
+		targetDrawTime := GetNextDrawTime(at)
+		predictedDateStr := targetDrawTime.Format("2006-01-02")
 		
 		status := "Lost Case"
 		winners, found := winMap[predictedDateStr]
@@ -279,7 +323,9 @@ func GetSavedPredictionsHandler(w http.ResponseWriter, r *http.Request) {
 			"numbers": num, 
 			"probability": prob, 
 			"source": src, 
+			"explanation": expl,
 			"predicted_at": at.UTC(), 
+			"targetDate": predictedDateStr,
 			"status": status,
 		})
 	}
