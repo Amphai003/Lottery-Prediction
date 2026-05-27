@@ -73,8 +73,15 @@ func SyncData() (int, error) {
 			apiResp.ResultData[0].WinNumber)
 	}
 
+	var maxAPIID int
+	_ = db.DB.QueryRow("SELECT COALESCE(MAX(api_id), 0) FROM prize_history").Scan(&maxAPIID)
+
 	count := 0
+	hasNewLottery := false
 	for _, item := range apiResp.ResultData {
+		if maxAPIID > 0 && item.ID > maxAPIID {
+			hasNewLottery = true
+		}
 		win := strings.ReplaceAll(item.WinNumber, " ", "")
 		_, err := db.DB.Exec("INSERT INTO prize_history (api_id, round_id, round_date, win_number, round_number) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (api_id) DO UPDATE SET win_number = $6", 
 			item.ID, item.RoundID, item.RoundDate, win, item.RoundNumber, win)
@@ -82,48 +89,49 @@ func SyncData() (int, error) {
 			count++
 		}
 	}
-	fmt.Printf("[%v] Sync complete. Processed %d records.\n", time.Now().Format("15:04:05"), count)
+	fmt.Printf("[%v] Sync complete. Processed %d records. Has New Lottery: %t\n", time.Now().Format("15:04:05"), count, hasNewLottery)
 
-	// 3. Smart Trigger: Ensure we have auto-predictions for the UPCOMING draw.
-	var lastWinDate time.Time
-	err = db.DB.QueryRow("SELECT round_date FROM prize_history WHERE win_number != '' ORDER BY api_id DESC LIMIT 1").Scan(&lastWinDate)
-	
-	if err == nil {
-		ict := time.FixedZone("ICT", 7*3600)
-		now := time.Now().In(ict)
+	// 3. Smart Trigger: Ensure we have auto-predictions.
+	ict := time.FixedZone("ICT", 7*3600)
+	now := time.Now().In(ict)
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, ict)
+
+	var dailyBatchCount int
+	_ = db.DB.QueryRow("SELECT COUNT(*) FROM predictions WHERE source = 'auto' AND predicted_at >= $1", todayStart.UTC()).Scan(&dailyBatchCount)
+
+	var totalAutoCount int
+	_ = db.DB.QueryRow("SELECT COUNT(*) FROM predictions WHERE source = 'auto'").Scan(&totalAutoCount)
+
+	shouldGenerate := false
+	reason := ""
+
+	if totalAutoCount == 0 {
+		shouldGenerate = true
+		reason = "initial bootstrap (0 predictions in database)"
+	} else if hasNewLottery {
+		shouldGenerate = true
+		reason = "new lottery result detected from API"
+	} else if dailyBatchCount < 15 {
+		shouldGenerate = true
+		reason = fmt.Sprintf("no auto predictions generated today yet (daily count: %d)", dailyBatchCount)
+	}
+
+	if shouldGenerate {
+		fmt.Printf("[%v] TRIGGER AUTO PREDICTION: %s. Generating fresh 15-set...\n", time.Now().Format("15:04:05"), reason)
 		
-		// The 'cutoff' is the time the latest available result was released.
-		drawTime := time.Date(lastWinDate.Year(), lastWinDate.Month(), lastWinDate.Day(), 20, 30, 0, 0, ict)
+		saveTime := time.Now().UTC()
+		configs := []struct{ d, c int }{{2, 5}, {3, 5}, {4, 3}, {5, 1}, {6, 1}}
 		
-		// If drawTime is in the future (gap between 00:00 and 20:30 of the draw day),
-		// we check for predictions made after the PREVIOUS draw.
-		if drawTime.After(now) {
-			drawTime = drawTime.AddDate(0, 0, -1)
-		}
-
-		var batchCount int
-		db.DB.QueryRow("SELECT COUNT(*) FROM predictions WHERE source = 'auto' AND predicted_at > $1", drawTime.UTC()).Scan(&batchCount)
-
-		// Check if we already have a batch for the NEXT draw.
-		// If we have at least 1 prediction, we consider the batch "initiated".
-		// We use 10 as a safer threshold in case of partial failures, but the goal is "once per cycle".
-		if batchCount < 10 {
-			fmt.Printf("[%v] NO RECENT BATCH (Count: %d). Generating fresh 15-set for upcoming draw...\n", time.Now().Format("15:04:05"), batchCount)
-			
-			saveTime := time.Now().UTC()
-			configs := []struct{ d, c int }{{2, 5}, {3, 5}, {4, 3}, {5, 1}, {6, 1}}
-			
-			for _, conf := range configs {
-				preds := services.GenerateAutoPredictions(conf.d, conf.c)
-				for _, p := range preds {
-					_, err := db.DB.Exec("INSERT INTO predictions (numbers, probability, source, explanation, predicted_at) VALUES ($1, $2, $3, $4, $5)", p.Numbers, p.Probability, "auto", p.Explanation, saveTime)
-					if err != nil {
-						log.Printf("ERROR: Failed to save auto-prediction: %v", err)
-					}
+		for _, conf := range configs {
+			preds := services.GenerateAutoPredictions(conf.d, conf.c)
+			for _, p := range preds {
+				_, err := db.DB.Exec("INSERT INTO predictions (numbers, probability, source, explanation, predicted_at) VALUES ($1, $2, $3, $4, $5)", p.Numbers, p.Probability, "auto", p.Explanation, saveTime)
+				if err != nil {
+					log.Printf("ERROR: Failed to save auto-prediction: %v", err)
 				}
 			}
-			fmt.Printf("[%v] Auto-Batch (15 items) generated and saved.\n", time.Now().Format("15:04:05"))
 		}
+		fmt.Printf("[%v] Auto-Batch (15 items) generated and saved.\n", time.Now().Format("15:04:05"))
 	}
 
 	return count, nil
