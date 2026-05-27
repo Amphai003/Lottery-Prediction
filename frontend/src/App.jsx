@@ -200,16 +200,23 @@ function App() {
         const timeStr = dateObj.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
         
         let strategyPrefix = "";
+        let cleanExplanation = p.explanation || "";
         if (p.explanation && p.explanation.includes("[")) {
           const match = p.explanation.match(/\[(.*?)\]/);
-          if (match) strategyPrefix = `[${match[1]}] `;
+          if (match) {
+            strategyPrefix = `[${match[1]}] `;
+            cleanExplanation = p.explanation.replace(/\[.*?\]\s*/, "");
+          }
         }
+
+        const statusText = p.status === 'Pending Result' ? '🎯 PENDING NEXT' : `⌛ ${p.status}`;
+        const batchInfo = `BATCH: ${dateStr} [${timeStr}] | ${statusText}`;
 
         return {
           numbers: p.numbers,
           rate: p.probability,
           source: 'auto',
-          text: `${strategyPrefix}BATCH: ${dateStr} [${timeStr}] | ${p.status === 'Pending Result' ? '🎯 PENDING NEXT' : '⌛ ' + p.status}`
+          text: cleanExplanation ? `${strategyPrefix}${cleanExplanation} (${batchInfo})` : `${strategyPrefix}${batchInfo}`
         };
       });
   }, [allPredictions]);
