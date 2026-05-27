@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
+
 	_ "github.com/lib/pq"
 )
 
@@ -16,6 +18,14 @@ func InitDB() *sql.DB {
 		// Secure default for local development (assumes a local postgres instance)
 		log.Println("NOTICE: DATABASE_URL not set. Falling back to local localhost:5432.")
 		connStr = "host=localhost port=5432 user=postgres password=postgres dbname=lottery sslmode=disable"
+	} else if strings.Contains(connStr, "pooler.supabase.com") || strings.Contains(connStr, "6543") {
+		if strings.Contains(connStr, "?") {
+			if !strings.Contains(connStr, "binary_parameters=") {
+				connStr += "&binary_parameters=yes"
+			}
+		} else {
+			connStr += "?binary_parameters=yes"
+		}
 	}
 	var err error
 	DB, err = sql.Open("postgres", connStr)
@@ -47,6 +57,7 @@ func InitDB() *sql.DB {
 	)`)
 	if err != nil { log.Fatalf("FATAL: Failed to create predictions table: %v", err) }
 	_, _ = DB.Exec("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'manual'")
+	_, _ = DB.Exec("ALTER TABLE predictions ADD COLUMN IF NOT EXISTS explanation TEXT DEFAULT ''")
 
 	fmt.Println("Database initialized successfully.")
 	return DB
