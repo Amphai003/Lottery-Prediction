@@ -54,7 +54,11 @@ export const useArchive = () => {
                         </div>
                       </div>
                       <span class="text-2xl font-black text-white tracking-[0.2em] font-mono group-hover:text-indigo-400 transition-colors">${p.numbers}</span>
-                      <span class="px-3 py-1 ${statusClass} text-[8px] font-black uppercase rounded-full border tracking-widest self-start">${p.status}</span>
+                      <div class="flex gap-2 items-center flex-wrap">
+                        <span class="px-3 py-1 ${statusClass} text-[8px] font-black uppercase rounded-full border tracking-widest self-start">${p.status}</span>
+                        ${p.probability ? `<span class="px-2 py-0.5 bg-white/5 border border-white/5 text-zinc-500 text-[8px] font-black uppercase rounded-full tracking-widest">${Number(p.probability).toFixed(0)}% Conf.</span>` : ''}
+                      </div>
+                      ${p.explanation ? `<div class="text-[9px] text-zinc-500 italic leading-relaxed mt-1 max-h-16 overflow-y-auto custom-scrollbar px-3 py-2 bg-black/30 rounded-xl border border-white/5 group-hover:text-zinc-400">${p.explanation}</div>` : ''}
                     </div>
                     `;
                   }).join('')}
