@@ -25,7 +25,7 @@ var (
 	syncMutex sync.Mutex
 )
 
-// GetNextDrawTime calculates the upcoming draw date/time (Mon, Wed, Fri at 20:30 ICT)
+// GetNextDrawTime calculates the upcoming draw date/time (Mon, Tue, Wed, Thu, Fri at 20:30 ICT)
 func GetNextDrawTime(t time.Time) time.Time {
 	ict := time.FixedZone("ICT", 7*3600)
 	t = t.In(ict)
@@ -39,7 +39,7 @@ func GetNextDrawTime(t time.Time) time.Time {
 
 	for {
 		wd := t.Weekday()
-		if wd == time.Monday || wd == time.Wednesday || wd == time.Friday {
+		if wd == time.Monday || wd == time.Tuesday || wd == time.Wednesday || wd == time.Thursday || wd == time.Friday {
 			return t
 		}
 		t = t.AddDate(0, 0, 1)
@@ -94,10 +94,25 @@ func SyncData() (int, error) {
 	// 3. Smart Trigger: Ensure we have auto-predictions.
 	ict := time.FixedZone("ICT", 7*3600)
 	now := time.Now().In(ict)
-	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, ict)
 
-	var dailyBatchCount int
-	_ = db.DB.QueryRow("SELECT COUNT(*) FROM predictions WHERE source = 'auto' AND predicted_at >= $1", todayStart.UTC()).Scan(&dailyBatchCount)
+	upcomingDraw := GetNextDrawTime(now)
+	upcomingDrawStr := upcomingDraw.Format("2006-01-02")
+
+	// Check if we already have auto predictions for the upcoming draw
+	hasUpcomingPrediction := false
+	rows, err := db.DB.Query("SELECT predicted_at FROM predictions WHERE source = 'auto'")
+	if err == nil && rows != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var at time.Time
+			if err := rows.Scan(&at); err == nil {
+				if GetNextDrawTime(at).Format("2006-01-02") == upcomingDrawStr {
+					hasUpcomingPrediction = true
+					break
+				}
+			}
+		}
+	}
 
 	var totalAutoCount int
 	_ = db.DB.QueryRow("SELECT COUNT(*) FROM predictions WHERE source = 'auto'").Scan(&totalAutoCount)
@@ -111,9 +126,9 @@ func SyncData() (int, error) {
 	} else if hasNewLottery {
 		shouldGenerate = true
 		reason = "new lottery result detected from API"
-	} else if dailyBatchCount < 15 {
+	} else if !hasUpcomingPrediction {
 		shouldGenerate = true
-		reason = fmt.Sprintf("no auto predictions generated today yet (daily count: %d)", dailyBatchCount)
+		reason = fmt.Sprintf("no auto predictions generated for the upcoming draw %s yet", upcomingDrawStr)
 	}
 
 	if shouldGenerate {
@@ -132,9 +147,41 @@ func SyncData() (int, error) {
 			}
 		}
 		fmt.Printf("[%v] Auto-Batch (15 items) generated and saved.\n", time.Now().Format("15:04:05"))
+
+		// Clean up any older duplicate auto-predictions targeting the same draw date
+		CleanDuplicateAutoPredictions(upcomingDrawStr, saveTime)
 	}
 
 	return count, nil
+}
+
+func CleanDuplicateAutoPredictions(targetDrawDateStr string, keepTime time.Time) {
+	rows, err := db.DB.Query("SELECT id, predicted_at FROM predictions WHERE source = 'auto'")
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	var idsToDelete []int
+	for rows.Next() {
+		var id int
+		var predictedAt time.Time
+		if err := rows.Scan(&id, &predictedAt); err == nil {
+			// If it has the same target draw date, but was generated at a different time than the one we want to keep
+			if GetNextDrawTime(predictedAt).Format("2006-01-02") == targetDrawDateStr {
+				if predictedAt.Sub(keepTime).Abs() > 10*time.Second {
+					idsToDelete = append(idsToDelete, id)
+				}
+			}
+		}
+	}
+
+	if len(idsToDelete) > 0 {
+		fmt.Printf("[%v] Cleaning up %d older duplicate auto-predictions targeting %s\n", time.Now().Format("15:04:05"), len(idsToDelete), targetDrawDateStr)
+		for _, id := range idsToDelete {
+			_, _ = db.DB.Exec("DELETE FROM predictions WHERE id = $1", id)
+		}
+	}
 }
 
 func SyncHandler(w http.ResponseWriter, r *http.Request) {
