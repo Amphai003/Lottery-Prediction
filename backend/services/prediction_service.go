@@ -468,13 +468,21 @@ func RunRollerBallSimulation(scores []digitScore, pos int) (int, string) {
 }
 
 func GenerateAutoPredictions(digits int, count int) []PredictionResult {
-	// Auto predictions now analyze exactly the last 10 past history winning numbers for short-term momentum
-	history := GetHistoryData(10)
-	if len(history) < 5 { history = GetHistoryData(100) }
-	
+	// Auto predictions now run an unbiased, fair physical simulation (normally random)
+	// instead of following past history which caused zero correct predictions (0 wins, 255 missed).
 	allPositionScores := make([][]digitScore, digits)
 	for pos := 0; pos < digits; pos++ {
-		allPositionScores[pos] = CalculateDigitScores(history, digits, pos)
+		scores := make([]digitScore, 10)
+		for i := 0; i < 10; i++ {
+			scores[i] = digitScore{
+				digit:     fmt.Sprintf("%d", i),
+				frequency: 0,
+				momentum:  0,
+				lastSeen:  0,
+				score:     1.0,
+			}
+		}
+		allPositionScores[pos] = scores
 	}
 
 	var results []PredictionResult
