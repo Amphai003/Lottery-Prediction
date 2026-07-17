@@ -15,6 +15,7 @@ import Header from './components/Header'
 import Analytics from './components/Analytics'
 import PredictionNodes from './components/PredictionNodes'
 import Registry from './components/Registry'
+import PrizeCalculator from './components/PrizeCalculator'
 
 function App() {
   const dispatch = useDispatch()
@@ -238,6 +239,8 @@ function App() {
       />
 
       <Analytics stats={stats} />
+
+      <PrizeCalculator history={history} />
 
       <PredictionNodes 
         gptSets={gptSets} geminiSets={geminiSets} localSets={localSets} autoSets={autoSets}
