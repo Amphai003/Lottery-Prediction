@@ -1,11 +1,27 @@
 import React from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 
+const fmtKip = (n) => {
+  const abs = Math.abs(n);
+  const sign = n < 0 ? '-' : n > 0 ? '+' : '';
+  if (abs >= 1_000_000_000) return `${sign}${(abs / 1_000_000_000).toFixed(2)}B KIP`;
+  if (abs >= 1_000_000)     return `${sign}${(abs / 1_000_000).toFixed(3)}M KIP`;
+  if (abs >= 1_000)         return `${sign}${(abs / 1_000).toFixed(0)}K KIP`;
+  return `${sign}${abs} KIP`;
+};
+
 const Analytics = ({ stats }) => {
   const isZeroData = stats.wins === 0 && stats.losses === 0 && stats.pending === 0;
   const chartDisplayData = isZeroData 
     ? [{ name: 'Empty', value: 1, color: '#18181b' }] 
     : stats.chartData;
+
+  // Simple aggregate: Missed Rounds × 1,000 KIP spent, Wins × 60,000 KIP won
+  const spent     = stats.losses * 1_000;
+  const won       = stats.wins   * 60_000;
+  const net       = won - spent;
+  const netPos    = net > 0;
+  const netNeg    = net < 0;
 
   return (
     <section className="animate-slide-up">
@@ -54,7 +70,43 @@ const Analytics = ({ stats }) => {
                     <div className="text-xl sm:text-2xl font-black text-[var(--text-main)]">{stats.losses}</div>
                  </div>
               </div>
-              
+
+              {/* ── Prize Result Summary ── */}
+              <div className="p-4 rounded-[1.2rem] sm:rounded-[1.5rem] border border-white/5 bg-zinc-950/50 flex flex-col gap-3">
+                <span className="text-[8px] sm:text-[9px] font-black text-amber-400 uppercase tracking-widest">🏆 Prize Result</span>
+
+                {/* Equation: Missed − Won = Net */}
+                <div className="flex items-center gap-2 flex-wrap font-mono">
+                  <div className="flex flex-col items-center">
+                    <span className="text-[7px] font-black uppercase tracking-widest text-zinc-600 mb-0.5">Missed</span>
+                    <span className="text-[12px] sm:text-[14px] font-black text-rose-400">{fmtKip(spent)}</span>
+                  </div>
+                  <span className="text-zinc-700 font-black text-lg mt-3">−</span>
+                  <div className="flex flex-col items-center">
+                    <span className="text-[7px] font-black uppercase tracking-widest text-zinc-600 mb-0.5">Won ({stats.wins}×60K)</span>
+                    <span className="text-[12px] sm:text-[14px] font-black text-emerald-400">{fmtKip(won)}</span>
+                  </div>
+                  <span className="text-zinc-700 font-black text-lg mt-3">=</span>
+                  <div className="flex flex-col items-center">
+                    <span className="text-[7px] font-black uppercase tracking-widest text-zinc-600 mb-0.5">Net</span>
+                    <span className={`text-[13px] sm:text-[15px] font-black ${netPos ? 'text-emerald-400' : netNeg ? 'text-rose-400' : 'text-zinc-400'}`}>
+                      {fmtKip(net)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Thin progress bar showing won vs spent */}
+                <div className="w-full bg-white/5 h-1 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-emerald-500 rounded-full transition-all duration-700"
+                    style={{ width: `${Math.min((won / (spent || 1)) * 100, 100)}%` }}
+                  />
+                </div>
+                <div className="text-[7px] text-zinc-700 font-mono">
+                  {stats.losses} missed round{stats.losses !== 1 ? 's' : ''} · {stats.wins} correct · 2-digit prize (60,000 KIP each)
+                </div>
+              </div>
+
               <div className="mt-2 p-4 bg-indigo-500/10 rounded-2xl border border-indigo-500/10">
                 <div className="flex justify-between items-center mb-3">
                   <span className="text-[9px] font-black text-indigo-400 uppercase tracking-widest">Node Efficiency Comparison</span>

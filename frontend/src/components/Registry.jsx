@@ -1,72 +1,5 @@
 import React from 'react';
 
-// ── Prize table (KIP) ────────────────────────────────────────────────────────
-const PRIZES = { 2: 60_000, 3: 500_000, 4: 5_000_000, 5: 40_000_000, 6: 400_000_000 };
-
-const fmtK = (n) => {
-  const abs = Math.abs(n);
-  if (abs >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (abs >= 1_000)     return `${(n / 1_000).toFixed(0)}K`;
-  return String(n);
-};
-
-// Count how many trailing digits match (Lao lottery rule)
-const countMatch = (ticket, winner) => {
-  if (!ticket || !winner) return 0;
-  let m = 0;
-  for (let i = 1; i <= Math.min(ticket.length, winner.length, 6); i++) {
-    if (ticket.slice(-i) === winner.slice(-i)) m = i;
-    else break;
-  }
-  return m;
-};
-
-// Per-card prize row
-function PrizeRow({ roundNumber, winNumber }) {
-  if (!winNumber) return null;
-
-  const rn        = String(roundNumber);
-  const cost      = parseInt(rn, 10) * 1_000;
-  const matched   = countMatch(rn, winNumber);
-  const prize     = PRIZES[matched] || 0;
-  const net       = prize - cost;
-  const isProfit  = net > 0;
-  const isLoss    = net < 0;
-
-  return (
-    <div className="w-full border-t border-white/5 pt-2 mt-1 flex flex-col gap-0.5">
-      {/* Cost row */}
-      <div className="flex justify-between items-center text-[7px] sm:text-[8px] font-mono">
-        <span className="text-zinc-700 uppercase tracking-widest">Spent</span>
-        <span className="text-zinc-500">{fmtK(cost)}</span>
-      </div>
-
-      {/* Match + prize */}
-      {matched >= 2 ? (
-        <div className="flex justify-between items-center text-[7px] sm:text-[8px] font-mono">
-          <span className="text-emerald-600 uppercase tracking-widest">{matched}D won</span>
-          <span className="text-emerald-500">+{fmtK(prize)}</span>
-        </div>
-      ) : (
-        <div className="flex justify-between items-center text-[7px] sm:text-[8px] font-mono">
-          <span className="text-zinc-700 uppercase tracking-widest">No match</span>
-          <span className="text-zinc-700">—</span>
-        </div>
-      )}
-
-      {/* Net result */}
-      <div className={`flex justify-between items-center text-[8px] sm:text-[9px] font-black font-mono border-t border-white/5 pt-0.5 mt-0.5`}>
-        <span className={isProfit ? 'text-emerald-500' : isLoss ? 'text-rose-500' : 'text-zinc-600'}>
-          {isProfit ? 'Profit' : isLoss ? 'Loss' : 'Even'}
-        </span>
-        <span className={isProfit ? 'text-emerald-400' : isLoss ? 'text-rose-400' : 'text-zinc-600'}>
-          {net >= 0 ? '+' : ''}{fmtK(net)}
-        </span>
-      </div>
-    </div>
-  );
-}
-
 const Registry = ({ 
   history, total, page, setPage, pageSize, 
   isHistoryExpanded, setIsHistoryExpanded,
@@ -129,9 +62,6 @@ const Registry = ({
               {record.winNumber || "------"}
             </div>
             <div className="text-[7px] sm:text-[8px] text-zinc-800 font-bold uppercase tracking-[0.15em] sm:tracking-[0.2em] relative z-10 opacity-70 border-t border-white/5 pt-2 sm:pt-4 w-full text-center">{new Date(record.roundDate).toLocaleDateString()}</div>
-
-            {/* ── Inline Prize Calc ── */}
-            <PrizeRow roundNumber={record.roundNumber} winNumber={record.winNumber} />
           </div>
       ))}
     </div>
