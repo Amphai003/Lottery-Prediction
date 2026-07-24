@@ -96,38 +96,6 @@ func TestCalculateDigitScores(t *testing.T) {
 	}
 }
 
-func TestRunRollerBallSimulation(t *testing.T) {
-	// Create some dummy digit scores to seed the simulation properties
-	scores := []digitScore{
-		{digit: "0", frequency: 5, momentum: 2, lastSeen: 1, score: 10.0},
-		{digit: "1", frequency: 12, momentum: 4, lastSeen: 0, score: 25.0},
-		{digit: "2", frequency: 3, momentum: 1, lastSeen: 5, score: 5.0},
-		{digit: "3", frequency: 8, momentum: 3, lastSeen: 2, score: 15.0},
-		{digit: "4", frequency: 6, momentum: 2, lastSeen: 3, score: 12.0},
-		{digit: "5", frequency: 15, momentum: 5, lastSeen: 0, score: 30.0},
-		{digit: "6", frequency: 2, momentum: 0, lastSeen: 10, score: 2.0},
-		{digit: "7", frequency: 9, momentum: 3, lastSeen: 1, score: 18.0},
-		{digit: "8", frequency: 4, momentum: 1, lastSeen: 4, score: 7.0},
-		{digit: "9", frequency: 7, momentum: 2, lastSeen: 2, score: 13.0},
-	}
-
-	digit, explanation := RunRollerBallSimulation(scores, 0)
-
-	// Verify output values
-	if digit < 0 || digit > 9 {
-		t.Errorf("Expected drawn digit to be in range [0, 9], got %d", digit)
-	}
-
-	if explanation == "" {
-		t.Errorf("Expected explanation string not to be empty")
-	}
-
-	// Verify narrative contains expected keywords
-	if !strings.Contains(explanation, "Weight:") || !strings.Contains(explanation, "Bouncy:") {
-		t.Errorf("Expected explanation to contain weight and bouncy stats, got: %s", explanation)
-	}
-}
-
 func TestGenerateAutoPredictions(t *testing.T) {
 	results := GenerateAutoPredictions(3, 5)
 
@@ -135,15 +103,60 @@ func TestGenerateAutoPredictions(t *testing.T) {
 		t.Fatalf("Expected 5 predictions, got %d", len(results))
 	}
 
+	// Honest odds: a 3-digit ticket is a true 1-in-1000 = 0.1% chance.
+	seen := make(map[string]bool)
 	for _, p := range results {
 		if len(p.Numbers) != 3 {
 			t.Errorf("Expected prediction number to have 3 digits, got %d (value: %s)", len(p.Numbers), p.Numbers)
 		}
-		if p.Probability < 80.0 || p.Probability > 100.0 {
-			t.Errorf("Expected probability to be between 80%% and 100%%, got %f", p.Probability)
+		if p.Probability != 0.1 {
+			t.Errorf("Expected honest 3-digit probability of 0.1%%, got %f", p.Probability)
 		}
-		if !strings.Contains(p.Explanation, "[PULSE PHYSICAL]") {
-			t.Errorf("Expected explanation to contain [PULSE PHYSICAL], got %s", p.Explanation)
+		if !strings.Contains(p.Explanation, "[PULSE UNIFORM]") {
+			t.Errorf("Expected explanation to contain [PULSE UNIFORM], got %s", p.Explanation)
 		}
+		// Coverage guarantee: every pick in the batch must be distinct.
+		if seen[p.Numbers] {
+			t.Errorf("Expected all picks to be distinct, but %s was repeated", p.Numbers)
+		}
+		seen[p.Numbers] = true
+	}
+}
+
+// TestGenerateAutoPredictionsUniform verifies the generator is genuinely uniform
+// (the old physics simulation was heavily biased toward low digits: 15%+ for 0/1
+// vs 5.5% for 9). Over many single-digit draws every digit should land near 10%.
+func TestGenerateAutoPredictionsUniform(t *testing.T) {
+	counts := make([]int, 10)
+	const n = 60000
+	for i := 0; i < n; i++ {
+		r := GenerateAutoPredictions(1, 1)
+		counts[int(r[0].Numbers[0]-'0')]++
+	}
+	expected := float64(n) / 10.0
+	for d := 0; d < 10; d++ {
+		// Allow a generous 20% tolerance band; a biased generator (e.g. 15% vs 5%)
+		// would blow straight past this, a fair one comfortably stays inside.
+		if float64(counts[d]) < expected*0.8 || float64(counts[d]) > expected*1.2 {
+			t.Errorf("digit %d appeared %d times (%.1f%%), expected ~%.0f (10%%) — distribution not uniform",
+				d, counts[d], 100*float64(counts[d])/float64(n), expected)
+		}
+	}
+}
+
+// TestGenerateAutoPredictionsDistinctCap ensures we never loop forever or emit
+// duplicates when asked for more picks than the number space allows.
+func TestGenerateAutoPredictionsDistinctCap(t *testing.T) {
+	// Only 100 distinct 2-digit numbers exist; asking for 150 must cap at 100.
+	results := GenerateAutoPredictions(2, 150)
+	if len(results) != 100 {
+		t.Fatalf("Expected batch to cap at 100 distinct 2-digit numbers, got %d", len(results))
+	}
+	seen := make(map[string]bool)
+	for _, p := range results {
+		if seen[p.Numbers] {
+			t.Fatalf("Duplicate pick %s in a distinct batch", p.Numbers)
+		}
+		seen[p.Numbers] = true
 	}
 }
