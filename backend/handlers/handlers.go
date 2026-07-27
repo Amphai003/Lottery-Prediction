@@ -135,7 +135,7 @@ func SyncData() (int, error) {
 		fmt.Printf("[%v] TRIGGER AUTO PREDICTION: %s. Generating fresh 15-set...\n", time.Now().Format("15:04:05"), reason)
 		
 		saveTime := time.Now().UTC()
-		configs := []struct{ d, c int }{{2, 5}, {3, 5}, {4, 3}, {5, 1}, {6, 1}}
+		configs := []struct{ d, c int }{{2, 14}, {6, 1}}
 		
 		for _, conf := range configs {
 			preds := services.GenerateAutoPredictions(conf.d, conf.c)
