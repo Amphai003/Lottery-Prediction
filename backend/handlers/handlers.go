@@ -328,7 +328,7 @@ func GetSavedPredictionsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 2. Evaluate each prediction based on its specific date
-	rows, _ := db.DB.Query("SELECT id, numbers, probability, source, explanation, predicted_at FROM predictions ORDER BY predicted_at DESC LIMIT 500")
+	rows, _ := db.DB.Query("SELECT id, numbers, probability, source, explanation, predicted_at FROM predictions ORDER BY predicted_at DESC")
 	if rows == nil { 
 		json.NewEncoder(w).Encode([]interface{}{})
 		return 
